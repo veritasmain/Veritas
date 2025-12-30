@@ -84,6 +84,8 @@ if analysis_trigger:
                 
                 # 1. Scrape with Firecrawl
                 app = Firecrawl(api_key=firecrawl_key)
+                
+                # Standard markdown scrape
                 scraped_data = app.scrape(target_url, formats=['markdown'])
                 
                 if not scraped_data:
@@ -110,7 +112,7 @@ if analysis_trigger:
                 status_box.write("🧠 Analyzing fraud patterns...")
                 genai.configure(api_key=gemini_key)
                 
-                # FIXED: Using 'gemini-pro' (Text only model)
+                # --- CHANGE 1: Using 'gemini-pro' (Compatible with v1beta) ---
                 model = genai.GenerativeModel('gemini-pro')
                 
                 prompt = f"""
@@ -136,11 +138,61 @@ if analysis_trigger:
                 
                 genai.configure(api_key=gemini_key)
                 
-                # FIXED: Using 'gemini-pro-vision' (The classic image model)
+                # --- CHANGE 2: Using 'gemini-pro-vision' (Compatible with v1beta) ---
                 model = genai.GenerativeModel('gemini-pro-vision')
                 
                 prompt = """
                 Analyze this image. Look for scam signs like fake prices, typos, or unrealistic claims.
                 Return JSON with keys: "score" (0-100), "verdict", "red_flags", "reviews_summary".
                 """
-                response = model.generate_content(
+                response = model.generate_content([prompt, uploaded_image])
+                result = json.loads(clean_json(response.text))
+                
+                source_label = "Screenshot Upload"
+
+            # --- DISPLAY RESULTS ---
+            status_box.update(label="✅ Analysis Complete!", state="complete", expanded=False)
+            
+            # 1. PRODUCT IMAGE
+            st.divider()
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if analysis_trigger == "link" and product_image_url:
+                    st.image(product_image_url, caption="Verifying Product...", width=200)
+                elif analysis_trigger == "image" and uploaded_image:
+                    st.image(uploaded_image, caption="Verifying Upload...", width=200)
+            
+            # 2. THE 3-CARD SYSTEM
+            tab1, tab2, tab3 = st.tabs(["🛡️ The Verdict", "🚩 Reality Check", "💬 Reviews"])
+            
+            with tab1:
+                score = result.get("score", 0)
+                color = "red" if score < 50 else "orange" if score < 80 else "green"
+                st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
+                st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Unknown')}</h3>", unsafe_allow_html=True)
+                if score < 50:
+                    st.error("⛔ DO NOT BUY. Strong evidence of fraud.")
+                elif score < 80:
+                    st.warning("⚠️ Proceed with caution.")
+                else:
+                    st.success("✅ Looks safe to proceed.")
+
+            with tab2:
+                st.subheader("Why?")
+                for flag in result.get("red_flags", []):
+                    st.write(f"• {flag}")
+
+            with tab3:
+                st.subheader("Public Consensus")
+                st.info(result.get("reviews_summary", "No reviews found."))
+
+            # 3. SAVE HISTORY
+            st.session_state.history.append({
+                "source": source_label,
+                "score": score,
+                "verdict": result.get("verdict")
+            })
+
+        except Exception as e:
+            status_box.update(label="❌ Error", state="error")
+            st.error(f"Something went wrong: {e}")
