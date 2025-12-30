@@ -96,7 +96,6 @@ def clean_and_parse_json(response_text):
         try:
             return json.loads(sanitized_text, strict=False)
         except json.JSONDecodeError:
-            # Return an empty structure if it fails completely
             return {}
 
 # --- CACHED SCRAPING ---
@@ -183,8 +182,9 @@ if analysis_trigger:
                 status_box.write("🧠 Analyzing technical specs & fraud...")
                 genai.configure(api_key=gemini_key)
                 
-                # --- MODEL SET TO 1.5 FLASH (High Quota) ---
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                # --- UPDATED TO GEMINI 2.0 FLASH ---
+                # This model has the high free tier (1500 req/day) replacing 1.5
+                model = genai.GenerativeModel('gemini-2.0-flash')
                 
                 prompt = f"""
                 You are Veritas, a technical product auditor. Analyze this webpage content.
@@ -214,18 +214,15 @@ if analysis_trigger:
                 {website_content}
                 """
                 
-                # Simple retry logic for transient errors
                 try:
                     response = model.generate_content(prompt)
                 except Exception as e:
-                    # If we hit a temporary glitch, wait 2 seconds and try once more
                     if "429" in str(e):
                         time.sleep(2)
                         response = model.generate_content(prompt)
                     else:
                         raise e
 
-                # --- ROBUST PARSING APPLIED HERE ---
                 result = clean_and_parse_json(response.text)
                 
                 source_label = result.get("product_name", target_url[:30])
@@ -244,8 +241,8 @@ if analysis_trigger:
                 status_box.write("👁️ Scanning visual elements...")
                 genai.configure(api_key=gemini_key)
                 
-                # --- MODEL SET TO 1.5 FLASH (High Quota) ---
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                # --- UPDATED TO GEMINI 2.0 FLASH ---
+                model = genai.GenerativeModel('gemini-2.0-flash')
                 
                 prompt = """
                 Analyze this image. Identify the product.
@@ -254,8 +251,6 @@ if analysis_trigger:
                 "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
                 """
                 response = model.generate_content([prompt, uploaded_image])
-                
-                # --- ROBUST PARSING APPLIED HERE ---
                 result = clean_and_parse_json(response.text)
                 
                 source_label = result.get("product_name", "Screenshot Upload")
