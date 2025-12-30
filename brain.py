@@ -84,14 +84,13 @@ if analysis_trigger:
                 
                 # 1. Scrape with Firecrawl
                 app = Firecrawl(api_key=firecrawl_key)
-                
-                # SAFE MODE: Using simple markdown format
+                # Using the correct new syntax
                 scraped_data = app.scrape(target_url, formats=['markdown'])
                 
                 if not scraped_data:
                     raise Exception("Could not connect to website.")
 
-                # 2. Extract Data (Safe access)
+                # 2. Extract Data (Safe Mode)
                 try:
                     website_content = scraped_data.markdown
                     metadata = scraped_data.metadata
@@ -99,8 +98,7 @@ if analysis_trigger:
                     website_content = scraped_data.get('markdown', '')
                     metadata = scraped_data.get('metadata', {})
                 
-                # Truncate content
-                website_content = str(website_content)[:20000]
+                website_content = str(website_content)[:30000]
                 
                 # Get Image
                 if metadata:
@@ -113,8 +111,8 @@ if analysis_trigger:
                 status_box.write("🧠 Analyzing fraud patterns...")
                 genai.configure(api_key=gemini_key)
                 
-                # REVERTED: Using 'gemini-pro' (The reliable model)
-                model = genai.GenerativeModel('gemini-pro')
+                # Using the standard model that works with the updated library
+                model = genai.GenerativeModel('gemini-1.5-flash')
                 
                 prompt = f"""
                 You are Veritas. Analyze this website content for fraud.
@@ -138,8 +136,7 @@ if analysis_trigger:
                 status_box.write("👁️ Scanning visual elements...")
                 
                 genai.configure(api_key=gemini_key)
-                # REVERTED: Using 'gemini-pro-vision' for images
-                model = genai.GenerativeModel('gemini-pro-vision')
+                model = genai.GenerativeModel('gemini-1.5-flash')
                 
                 prompt = """
                 Analyze this image. Look for scam signs like fake prices, typos, or unrealistic claims.
