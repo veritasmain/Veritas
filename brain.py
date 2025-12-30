@@ -1,10 +1,14 @@
 import streamlit as st
 import google.generativeai as genai
-from firecrawl import FirecrawlApp
+from firecrawl import FirecrawlApp  # fallback import
+try:
+    from firecrawl import Firecrawl
+except ImportError:
+    Firecrawl = FirecrawlApp
+
 from PIL import Image
 import json
 import re
-import requests
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -46,13 +50,11 @@ def get_api_keys():
         return None, None
 
 def clean_json(text):
-    # Cleans API response to ensure valid JSON
     text = re.sub(r'```json', '', text)
     text = re.sub(r'```', '', text)
     return text.strip()
 
 # --- INPUT TABS ---
-# We use tabs to switch between Link and Screenshot mode
 input_tab1, input_tab2 = st.tabs(["🔗 Paste Link", "📸 Upload Screenshot"])
 
 target_url = None
@@ -85,10 +87,19 @@ if analysis_trigger:
             if analysis_trigger == "link" and target_url:
                 status_box.write("🌐 Scouting the website...")
                 
-                # 1. Scrape with Firecrawl
-                app = FirecrawlApp(api_key=firecrawl_key)
-                # We ask for 'markdown' (text) and 'metadata' (to find the image)
-                scraped_data = app.scrape_url(target_url, params={'formats': ['markdown', 'json']})
+                # 1. Scrape with Firecrawl (Handling Version Differences)
+                try:
+                    # Try New Version Syntax
+                    app = Firecrawl(api_key=firecrawl_key)
+                    scraped_data = app.scrape_url(target_url, params={'formats': ['markdown', 'json']})
+                except AttributeError:
+                    # Fallback for alternative version names
+                    try:
+                        scraped_data = app.scrape(target_url, params={'formats': ['markdown', 'json']})
+                    except:
+                        # Old Version Syntax
+                        app = FirecrawlApp(api_key=firecrawl_key)
+                        scraped_data = app.scrape_url(target_url, params={'formats': ['markdown', 'json']})
                 
                 if not scraped_data:
                     raise Exception("Could not connect to website.")
@@ -96,8 +107,6 @@ if analysis_trigger:
                 # 2. Extract Data
                 website_content = scraped_data.get('markdown', '')[:20000]
                 metadata = scraped_data.get('metadata', {})
-                
-                # Try to find the 'og:image' (OpenGraph image) which is usually the main product pic
                 product_image_url = metadata.get('og:image')
                 
                 # 3. Analyze with Gemini
@@ -120,7 +129,6 @@ if analysis_trigger:
                 response = model.generate_content(prompt)
                 result = json.loads(clean_json(response.text))
                 
-                # Save source for history
                 source_label = target_url[:30] + "..."
 
             # --- PATH B: ANALYZE IMAGE ---
@@ -131,8 +139,8 @@ if analysis_trigger:
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 
                 prompt = """
-                Analyze this image (screenshot of a product or ad). Look for scam signs like fake prices, typos, or unrealistic claims.
-                Return JSON with keys: "score" (0-100), "verdict", "red_flags", "reviews_summary" (if any text in image).
+                Analyze this image. Look for scam signs like fake prices, typos, or unrealistic claims.
+                Return JSON with keys: "score" (0-100), "verdict", "red_flags", "reviews_summary".
                 """
                 response = model.generate_content([prompt, uploaded_image])
                 result = json.loads(clean_json(response.text))
@@ -142,7 +150,7 @@ if analysis_trigger:
             # --- DISPLAY RESULTS ---
             status_box.update(label="✅ Analysis Complete!", state="complete", expanded=False)
             
-            # 1. PRODUCT IMAGE (The "Verification" Check)
+            # 1. PRODUCT IMAGE
             st.divider()
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
@@ -151,17 +159,14 @@ if analysis_trigger:
                 elif analysis_trigger == "image" and uploaded_image:
                     st.image(uploaded_image, caption="Verifying Upload...", width=200)
             
-            # 2. THE 3-CARD SYSTEM (Tabs)
+            # 2. THE 3-CARD SYSTEM
             tab1, tab2, tab3 = st.tabs(["🛡️ The Verdict", "🚩 Reality Check", "💬 Reviews"])
             
             with tab1:
-                # SCORE CARD
                 score = result.get("score", 0)
                 color = "red" if score < 50 else "orange" if score < 80 else "green"
-                
                 st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
                 st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Unknown')}</h3>", unsafe_allow_html=True)
-                
                 if score < 50:
                     st.error("⛔ DO NOT BUY. Strong evidence of fraud.")
                 elif score < 80:
@@ -170,17 +175,15 @@ if analysis_trigger:
                     st.success("✅ Looks safe to proceed.")
 
             with tab2:
-                # FLAGS CARD
                 st.subheader("Why?")
                 for flag in result.get("red_flags", []):
                     st.write(f"• {flag}")
 
             with tab3:
-                # REVIEWS CARD
                 st.subheader("Public Consensus")
                 st.info(result.get("reviews_summary", "No reviews found."))
 
-            # 3. SAVE TO HISTORY
+            # 3. SAVE HISTORY
             st.session_state.history.append({
                 "source": source_label,
                 "score": score,
