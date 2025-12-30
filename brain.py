@@ -171,7 +171,7 @@ if analysis_trigger:
                 st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
                 st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Unknown')}</h3>", unsafe_allow_html=True)
                 if score < 50:
-                    st.error("⛔ DO NOT BUY. Strong evidence of fraud.")
+                    st.error("⛔ DO NOT BUY. Misleading.")
                 elif score < 80:
                     st.warning("⚠️ Proceed with caution.")
                 else:
@@ -196,3 +196,4 @@ if analysis_trigger:
         except Exception as e:
             status_box.update(label="❌ Error", state="error")
             st.error(f"Something went wrong: {e}")
+
