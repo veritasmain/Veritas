@@ -39,6 +39,7 @@ st.caption("The Truth Filter for the Internet")
 # --- HELPER FUNCTIONS ---
 def get_api_keys():
     try:
+        # Ensure you have these set in .streamlit/secrets.toml
         return st.secrets["GEMINI_KEY"], st.secrets["FIRECRAWL_KEY"]
     except:
         st.error("🔑 API Keys missing! Add GEMINI_KEY and FIRECRAWL_KEY in Secrets.")
@@ -112,8 +113,8 @@ if analysis_trigger:
                 status_box.write("🧠 Analyzing fraud patterns...")
                 genai.configure(api_key=gemini_key)
                 
-                # --- CHANGE 1: Using 'gemini-pro' (Compatible with v1beta) ---
-                model = genai.GenerativeModel('gemini-pro')
+                # --- CHANGE: Updated to gemini-2.5-flash (Replacing gemini-pro) ---
+                model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 prompt = f"""
                 You are Veritas. Analyze this website content for fraud.
@@ -138,8 +139,9 @@ if analysis_trigger:
                 
                 genai.configure(api_key=gemini_key)
                 
-                # --- CHANGE 2: Using 'gemini-pro-vision' (Compatible with v1beta) ---
-                model = genai.GenerativeModel('gemini-pro-vision')
+                # --- CHANGE: Updated to gemini-2.5-flash (Replacing gemini-pro-vision) ---
+                # gemini-2.5-flash is multimodal and handles images perfectly
+                model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 prompt = """
                 Analyze this image. Look for scam signs like fake prices, typos, or unrealistic claims.
@@ -196,4 +198,3 @@ if analysis_trigger:
         except Exception as e:
             status_box.update(label="❌ Error", state="error")
             st.error(f"Something went wrong: {e}")
-
