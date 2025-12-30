@@ -1,11 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
-from firecrawl import FirecrawlApp  # fallback import
-try:
-    from firecrawl import Firecrawl
-except ImportError:
-    Firecrawl = FirecrawlApp
-
+from firecrawl import Firecrawl
 from PIL import Image
 import json
 import re
@@ -87,24 +82,17 @@ if analysis_trigger:
             if analysis_trigger == "link" and target_url:
                 status_box.write("🌐 Scouting the website...")
                 
-                # 1. Scrape with Firecrawl (Handling Version Differences)
-                try:
-                    # Try New Version Syntax
-                    app = Firecrawl(api_key=firecrawl_key)
-                    scraped_data = app.scrape_url(target_url, params={'formats': ['markdown', 'json']})
-                except AttributeError:
-                    # Fallback for alternative version names
-                    try:
-                        scraped_data = app.scrape(target_url, params={'formats': ['markdown', 'json']})
-                    except:
-                        # Old Version Syntax
-                        app = FirecrawlApp(api_key=firecrawl_key)
-                        scraped_data = app.scrape_url(target_url, params={'formats': ['markdown', 'json']})
+                # 1. Scrape with Firecrawl (New v1.0 Syntax)
+                app = Firecrawl(api_key=firecrawl_key)
+                
+                # The command changed from scrape_url -> scrape
+                scraped_data = app.scrape(target_url, formats=['markdown', 'json'])
                 
                 if not scraped_data:
                     raise Exception("Could not connect to website.")
 
                 # 2. Extract Data
+                # In v1.0, data is often returned directly in the dictionary
                 website_content = scraped_data.get('markdown', '')[:20000]
                 metadata = scraped_data.get('metadata', {})
                 product_image_url = metadata.get('og:image')
