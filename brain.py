@@ -10,7 +10,7 @@ st.set_page_config(
     page_title="Veritas",
     page_icon="🛡️",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded" 
 )
 
 # --- HISTORY SETUP ---
@@ -23,9 +23,15 @@ with st.sidebar:
     if not st.session_state.history:
         st.caption("No searches yet.")
     else:
+        # Show reversed so newest is top
         for item in reversed(st.session_state.history):
+            st.markdown(f"**{item['source']}**")  # Now shows Product Name
             st.text(f"{item['verdict']}")
-            st.caption(f"{item['source']} - {item['score']}/100")
+            
+            # Color code the score
+            score = item['score']
+            color = "red" if score < 50 else "orange" if score < 80 else "green"
+            st.markdown(f"<span style='color:{color}'>Score: {score}/100</span>", unsafe_allow_html=True)
             st.divider()
     
     if st.button("Clear History"):
@@ -97,6 +103,7 @@ if analysis_trigger:
                 
                 website_content = str(website_content)[:30000]
                 
+                # Try to get og:image
                 if metadata:
                     if isinstance(metadata, dict):
                          product_image_url = metadata.get('og:image')
@@ -106,13 +113,14 @@ if analysis_trigger:
                 status_box.write("🧠 Analyzing fraud patterns...")
                 genai.configure(api_key=gemini_key)
                 
-                # Using the NEW working model
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
+                # --- PROMPT UPDATED: Asked for 'product_name' ---
                 prompt = f"""
                 You are Veritas. Analyze this website content for fraud.
                 
                 Return JSON with these keys:
+                - "product_name": Short, clear name of the product or website being sold.
                 - "score": 0-100 (0=Scam, 100=Safe).
                 - "verdict": Short title (e.g. "High Risk Scam").
                 - "red_flags": List of strings explaining why.
@@ -124,25 +132,27 @@ if analysis_trigger:
                 response = model.generate_content(prompt)
                 result = json.loads(clean_json(response.text))
                 
-                source_label = target_url[:30] + "..."
+                # Fallback if AI misses the name
+                source_label = result.get("product_name", target_url[:30])
 
             # --- PATH B: ANALYZE IMAGE ---
             elif analysis_trigger == "image" and uploaded_image:
                 status_box.write("👁️ Scanning visual elements...")
                 
                 genai.configure(api_key=gemini_key)
-                
-                # Using the NEW working model
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
+                # --- PROMPT UPDATED: Asked for 'product_name' ---
                 prompt = """
                 Analyze this image. Look for scam signs like fake prices, typos, or unrealistic claims.
-                Return JSON with keys: "score" (0-100), "verdict", "red_flags", "reviews_summary".
+                Return JSON with keys: 
+                "product_name": Short name of the item.
+                "score" (0-100), "verdict", "red_flags", "reviews_summary".
                 """
                 response = model.generate_content([prompt, uploaded_image])
                 result = json.loads(clean_json(response.text))
                 
-                source_label = "Screenshot Upload"
+                source_label = result.get("product_name", "Screenshot Upload")
 
             # --- DISPLAY RESULTS ---
             status_box.update(label="✅ Analysis Complete!", state="complete", expanded=False)
@@ -178,19 +188,20 @@ if analysis_trigger:
                 st.subheader("Public Consensus")
                 st.info(result.get("reviews_summary", "No reviews found."))
 
-            # Save History
+            # Save History with new Product Name
             st.session_state.history.append({
                 "source": source_label,
                 "score": score,
                 "verdict": result.get("verdict")
             })
 
-            # --- NEW SEARCH BUTTON ---
-            st.divider()
-            # This button refreshes the app, clearing the analysis view
-            if st.button("🔄 Start New Search", type="secondary"):
-                st.rerun()
-
         except Exception as e:
             status_box.update(label="❌ Error", state="error")
             st.error(f"Something went wrong: {e}")
+
+        # --- NEW SEARCH BUTTON (Moved outside try/except for visibility) ---
+        st.divider()
+        col_new_1, col_new_2, col_new_3 = st.columns([1, 2, 1])
+        with col_new_2:
+             if st.button("🔄 Start New Search", type="secondary", use_container_width=True):
+                 st.rerun()
