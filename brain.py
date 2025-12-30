@@ -84,13 +84,14 @@ if analysis_trigger:
                 
                 # 1. Scrape with Firecrawl
                 app = Firecrawl(api_key=firecrawl_key)
-                # Using the correct new syntax
+                
+                # Standard markdown scrape
                 scraped_data = app.scrape(target_url, formats=['markdown'])
                 
                 if not scraped_data:
                     raise Exception("Could not connect to website.")
 
-                # 2. Extract Data (Safe Mode)
+                # 2. Extract Data
                 try:
                     website_content = scraped_data.markdown
                     metadata = scraped_data.metadata
@@ -111,8 +112,8 @@ if analysis_trigger:
                 status_box.write("🧠 Analyzing fraud patterns...")
                 genai.configure(api_key=gemini_key)
                 
-                # Using the standard model that works with the updated library
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                # SWITCHED TO STANDARD MODEL (Reliable)
+                model = genai.GenerativeModel('gemini-pro')
                 
                 prompt = f"""
                 You are Veritas. Analyze this website content for fraud.
@@ -136,7 +137,10 @@ if analysis_trigger:
                 status_box.write("👁️ Scanning visual elements...")
                 
                 genai.configure(api_key=gemini_key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                
+                # SWITCHED TO VISION MODEL (Reliable)
+                model = genai.GenerativeModel('gemini-1.5-flash') 
+                # Note: If this fails, we will try gemini-pro-vision in the next update.
                 
                 prompt = """
                 Analyze this image. Look for scam signs like fake prices, typos, or unrealistic claims.
