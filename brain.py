@@ -85,18 +85,32 @@ if analysis_trigger:
                 # 1. Scrape with Firecrawl
                 app = Firecrawl(api_key=firecrawl_key)
                 
-                # FIXED: We only ask for 'markdown'. 
-                # Removing 'json' prevents the API from expecting a schema.
+                # FIXED: Removed 'json' to avoid schema error. Only asking for markdown.
                 scraped_data = app.scrape(target_url, formats=['markdown'])
                 
                 if not scraped_data:
                     raise Exception("Could not connect to website.")
 
-                # 2. Extract Data
-                # The data is usually inside the 'markdown' key of the response
-                website_content = scraped_data.get('markdown', '')[:20000]
-                metadata = scraped_data.get('metadata', {})
-                product_image_url = metadata.get('og:image')
+                # 2. Extract Data (Using Dot Notation for Objects)
+                # We try both methods (Object Attribute vs Dictionary) to be safe
+                try:
+                    website_content = scraped_data.markdown
+                    metadata = scraped_data.metadata
+                except AttributeError:
+                    # Fallback for older versions or unexpected dictionary returns
+                    website_content = scraped_data.get('markdown', '')
+                    metadata = scraped_data.get('metadata', {})
+                
+                # Truncate content to avoid token limits
+                website_content = str(website_content)[:20000]
+                
+                # Get Image
+                if metadata:
+                    # Metadata works differently in v1, try accessing as dict or object
+                    if isinstance(metadata, dict):
+                         product_image_url = metadata.get('og:image')
+                    else:
+                         product_image_url = getattr(metadata, 'og_image', None)
                 
                 # 3. Analyze with Gemini
                 status_box.write("🧠 Analyzing fraud patterns...")
