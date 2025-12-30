@@ -17,7 +17,7 @@ st.set_page_config(
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# --- CALLBACKS (The Fix) ---
+# --- CALLBACKS ---
 def clear_url_input():
     st.session_state.url_input = ""
 
@@ -35,7 +35,11 @@ with st.sidebar:
             st.text(f"{item['verdict']}")
             
             score = item['score']
-            color = "red" if score < 50 else "orange" if score < 80 else "green"
+            
+            # --- SCORING LOGIC (Sidebar) ---
+            # Red: 0-45 | Amber: 46-79 | Green: 80+
+            color = "red" if score <= 45 else "orange" if score < 80 else "green"
+            
             st.markdown(f"<span style='color:{color}'>Score: {score}/100</span>", unsafe_allow_html=True)
             st.divider()
     
@@ -74,7 +78,6 @@ with input_tab1:
         if st.button("Analyze Link", type="primary", use_container_width=True):
             analysis_trigger = "link"
     with col2:
-        # FIX: Used on_click callback to clear state safely
         st.button("New Link", type="primary", use_container_width=True, on_click=clear_url_input)
 
 with input_tab2:
@@ -85,7 +88,6 @@ with input_tab2:
             uploaded_image = Image.open(uploaded_file)
             analysis_trigger = "image"
     with col4:
-        # FIX: Used on_click callback here too
         st.button("New Upload", type="primary", use_container_width=True, on_click=clear_img_input)
 
 # --- ANALYSIS LOGIC ---
@@ -116,7 +118,6 @@ if analysis_trigger:
                     website_content = scraped_data.get('markdown', '')
                     metadata = scraped_data.get('metadata', {})
                 
-                # Send FULL text (no limit) so we catch reviews at the bottom
                 website_content = str(website_content)
                 
                 if metadata:
@@ -191,11 +192,15 @@ if analysis_trigger:
             
             with tab1:
                 score = result.get("score", 0)
-                color = "red" if score < 50 else "orange" if score < 80 else "green"
+                
+                # --- SCORING LOGIC (Main) ---
+                # Red: 0-45 | Amber: 46-79 | Green: 80+
+                color = "red" if score <= 45 else "orange" if score < 80 else "green"
+                
                 st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
                 st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Unknown')}</h3>", unsafe_allow_html=True)
                 
-                if score < 50:
+                if score <= 45:
                     st.error("⛔ DO NOT BUY. Poor quality or scam detected.")
                 elif score < 80:
                     st.warning("⚠️ Mixed reviews. Expect quality issues.")
@@ -227,7 +232,6 @@ if analysis_trigger:
             status_box.update(label="❌ Error", state="error")
             st.error(f"Something went wrong: {e}")
 
-        # --- BOTTOM REFRESH BUTTON (Also using callback) ---
         st.divider()
         if st.button("🔄 Start New Search", type="secondary", use_container_width=True, on_click=clear_url_input):
-             pass # Logic handled by on_click
+             pass
