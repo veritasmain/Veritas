@@ -39,7 +39,6 @@ st.caption("The Truth Filter for the Internet")
 # --- HELPER FUNCTIONS ---
 def get_api_keys():
     try:
-        # Ensure you have these set in .streamlit/secrets.toml
         return st.secrets["GEMINI_KEY"], st.secrets["FIRECRAWL_KEY"]
     except:
         st.error("🔑 API Keys missing! Add GEMINI_KEY and FIRECRAWL_KEY in Secrets.")
@@ -83,16 +82,12 @@ if analysis_trigger:
             if analysis_trigger == "link" and target_url:
                 status_box.write("🌐 Scouting the website...")
                 
-                # 1. Scrape with Firecrawl
                 app = Firecrawl(api_key=firecrawl_key)
-                
-                # Standard markdown scrape
                 scraped_data = app.scrape(target_url, formats=['markdown'])
                 
                 if not scraped_data:
                     raise Exception("Could not connect to website.")
 
-                # 2. Extract Data
                 try:
                     website_content = scraped_data.markdown
                     metadata = scraped_data.metadata
@@ -102,18 +97,16 @@ if analysis_trigger:
                 
                 website_content = str(website_content)[:30000]
                 
-                # Get Image
                 if metadata:
                     if isinstance(metadata, dict):
                          product_image_url = metadata.get('og:image')
                     else:
                          product_image_url = getattr(metadata, 'og_image', None)
                 
-                # 3. Analyze with Gemini
                 status_box.write("🧠 Analyzing fraud patterns...")
                 genai.configure(api_key=gemini_key)
                 
-                # --- CHANGE: Updated to gemini-2.5-flash (Replacing gemini-pro) ---
+                # Using the NEW working model
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 prompt = f"""
@@ -139,8 +132,7 @@ if analysis_trigger:
                 
                 genai.configure(api_key=gemini_key)
                 
-                # --- CHANGE: Updated to gemini-2.5-flash (Replacing gemini-pro-vision) ---
-                # gemini-2.5-flash is multimodal and handles images perfectly
+                # Using the NEW working model
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 prompt = """
@@ -155,7 +147,6 @@ if analysis_trigger:
             # --- DISPLAY RESULTS ---
             status_box.update(label="✅ Analysis Complete!", state="complete", expanded=False)
             
-            # 1. PRODUCT IMAGE
             st.divider()
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
@@ -164,7 +155,6 @@ if analysis_trigger:
                 elif analysis_trigger == "image" and uploaded_image:
                     st.image(uploaded_image, caption="Verifying Upload...", width=200)
             
-            # 2. THE 3-CARD SYSTEM
             tab1, tab2, tab3 = st.tabs(["🛡️ The Verdict", "🚩 Reality Check", "💬 Reviews"])
             
             with tab1:
@@ -188,12 +178,18 @@ if analysis_trigger:
                 st.subheader("Public Consensus")
                 st.info(result.get("reviews_summary", "No reviews found."))
 
-            # 3. SAVE HISTORY
+            # Save History
             st.session_state.history.append({
                 "source": source_label,
                 "score": score,
                 "verdict": result.get("verdict")
             })
+
+            # --- NEW SEARCH BUTTON ---
+            st.divider()
+            # This button refreshes the app, clearing the analysis view
+            if st.button("🔄 Start New Search", type="secondary"):
+                st.rerun()
 
         except Exception as e:
             status_box.update(label="❌ Error", state="error")
