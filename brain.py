@@ -76,10 +76,28 @@ def get_api_keys():
         st.error("🔑 API Keys missing! Add GEMINI_KEY and FIRECRAWL_KEY in Secrets.")
         return None, None
 
-def clean_json(text):
-    text = re.sub(r'```json', '', text)
+def clean_and_parse_json(response_text):
+    """
+    Strips Markdown, sanitizes control characters, and parses JSON safely.
+    Fixes the 'Invalid control character' error common with Gemini/Temu data.
+    """
+    # 1. Strip Markdown code blocks
+    text = re.sub(r'```json', '', response_text)
     text = re.sub(r'```', '', text)
-    return text.strip()
+    text = text.strip()
+
+    # 2. Try parsing normally first (allowing loose control chars if possible)
+    try:
+        return json.loads(text, strict=False)
+    except json.JSONDecodeError:
+        # 3. If that fails, scrub invisible control characters (newlines/tabs inside strings)
+        #    We replace them with a simple space.
+        sanitized_text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
+        try:
+            return json.loads(sanitized_text, strict=False)
+        except json.JSONDecodeError:
+            # Return an empty structure if it fails completely to prevent app crash
+            return {}
 
 # --- CACHED SCRAPING ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -180,7 +198,7 @@ if analysis_trigger:
 
                 OUTPUT FORMATTING:
                 1. "red_flags": Snappy bullet points (max 8 words).
-                2. "detailed_technical_analysis": Must be a SINGLE STRING formatted with bullets (e.g. "- Observation 1\n- Observation 2").
+                2. "detailed_technical_analysis": Must be a SINGLE STRING formatted with bullets (e.g. "- Observation 1\\n- Observation 2").
 
                 Return JSON:
                 - "product_name": Short name.
@@ -195,7 +213,9 @@ if analysis_trigger:
                 {website_content}
                 """
                 response = model.generate_content(prompt)
-                result = json.loads(clean_json(response.text))
+                
+                # --- FIX APPLIED HERE ---
+                result = clean_and_parse_json(response.text)
                 
                 source_label = result.get("product_name", target_url[:30])
 
@@ -221,7 +241,9 @@ if analysis_trigger:
                 "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
                 """
                 response = model.generate_content([prompt, uploaded_image])
-                result = json.loads(clean_json(response.text))
+                
+                # --- FIX APPLIED HERE ---
+                result = clean_and_parse_json(response.text)
                 
                 source_label = result.get("product_name", "Screenshot Upload")
                 
