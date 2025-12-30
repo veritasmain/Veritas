@@ -85,16 +85,17 @@ if analysis_trigger:
                 # 1. Scrape with Firecrawl (New v1.0 Syntax)
                 app = Firecrawl(api_key=firecrawl_key)
                 
-                # The command changed from scrape_url -> scrape
+                # UPDATED: We use 'formats' directly, not inside 'params'
                 scraped_data = app.scrape(target_url, formats=['markdown', 'json'])
                 
                 if not scraped_data:
                     raise Exception("Could not connect to website.")
 
-                # 2. Extract Data
-                # In v1.0, data is often returned directly in the dictionary
-                website_content = scraped_data.get('markdown', '')[:20000]
-                metadata = scraped_data.get('metadata', {})
+                # 2. Extract Data (Handling different response structures)
+                # Some versions put data in 'data' key, others at root
+                data_root = scraped_data.get('data', scraped_data)
+                website_content = data_root.get('markdown', '')[:20000]
+                metadata = data_root.get('metadata', {})
                 product_image_url = metadata.get('og:image')
                 
                 # 3. Analyze with Gemini
