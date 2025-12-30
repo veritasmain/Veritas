@@ -35,11 +35,7 @@ with st.sidebar:
             st.text(f"{item['verdict']}")
             
             score = item['score']
-            
-            # --- SCORING LOGIC (Sidebar) ---
-            # Red: 0-45 | Amber: 46-79 | Green: 80+
             color = "red" if score <= 45 else "orange" if score < 80 else "green"
-            
             st.markdown(f"<span style='color:{color}'>Score: {score}/100</span>", unsafe_allow_html=True)
             st.divider()
     
@@ -130,22 +126,24 @@ if analysis_trigger:
                 genai.configure(api_key=gemini_key)
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
+                # --- UPDATED PROMPT: UNIVERSAL CONSISTENCY ---
                 prompt = f"""
                 You are Veritas. Analyze this website content.
                 
-                CRITICAL INSTRUCTION:
-                1. IGNORE marketing fluff ("High Quality", "Best Seller").
-                2. ACTIVELY HUNT for user reviews, especially negative ones. Look for keywords: "weak", "broke", "bad quality", "waste", "disappointed".
-                3. If *any* reviews mention product failure (e.g., weak magnets), the Score MUST be below 60.
+                CRITICAL INSTRUCTION - PRODUCT CONSISTENCY:
+                - Judge the INTRINSIC QUALITY of the item itself, not just the seller.
+                - If this item is a known generic dropshipping product (e.g., "Galaxy Rose", "Levitating Pot", "Cheap Mini Projector"), give it the SAME LOW SCORE you would give it on any other site.
+                - A bad product on a nice website is still a bad product.
                 
-                FORMATTING RULES:
-                - "red_flags": Short bullet points (max 8 words each).
-                - "reviews_summary": Extremely concise (max 2 sentences).
-                
+                SCORING RULES:
+                - If reviews mention failure ("broke", "weak"): Score < 45 (Red).
+                - If it's a generic gadget with no brand history: Score < 60 (Amber).
+                - Only give > 80 (Green) for reputable brands with verified durability.
+
                 Return JSON:
                 - "product_name": Short name of the product.
-                - "score": 0-100 (0=Junk/Scam, 100=Great).
-                - "verdict": Short title (e.g. "Low Quality").
+                - "score": 0-100.
+                - "verdict": Short title.
                 - "red_flags": [List of short strings].
                 - "key_complaints": [List of specific defects found].
                 - "reviews_summary": "Short summary text."
@@ -165,12 +163,15 @@ if analysis_trigger:
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 prompt = """
-                Analyze this image. Look for scam signs or bad quality.
+                Analyze this image. Identify the product.
+                
+                CONSISTENCY CHECK:
+                - If this looks like a generic dropshipped item (e.g. cheap plastic gadget), score it LOW regardless of the ad quality.
+                - Judge the object, not the photography.
+                
                 Return JSON with keys: 
                 "product_name", "score", "verdict", 
-                "red_flags" (Short bullet points), 
-                "reviews_summary" (Concise), 
-                "key_complaints".
+                "red_flags", "reviews_summary", "key_complaints".
                 """
                 response = model.generate_content([prompt, uploaded_image])
                 result = json.loads(clean_json(response.text))
@@ -192,9 +193,6 @@ if analysis_trigger:
             
             with tab1:
                 score = result.get("score", 0)
-                
-                # --- SCORING LOGIC (Main) ---
-                # Red: 0-45 | Amber: 46-79 | Green: 80+
                 color = "red" if score <= 45 else "orange" if score < 80 else "green"
                 
                 st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
