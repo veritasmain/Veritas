@@ -4,6 +4,7 @@ from firecrawl import Firecrawl
 from PIL import Image
 import json
 import re
+import time
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -91,12 +92,11 @@ def clean_and_parse_json(response_text):
         return json.loads(text, strict=False)
     except json.JSONDecodeError:
         # 3. If that fails, scrub invisible control characters (newlines/tabs inside strings)
-        #    We replace them with a simple space.
         sanitized_text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
         try:
             return json.loads(sanitized_text, strict=False)
         except json.JSONDecodeError:
-            # Return an empty structure if it fails completely to prevent app crash
+            # Return an empty structure if it fails completely
             return {}
 
 # --- CACHED SCRAPING ---
@@ -182,9 +182,10 @@ if analysis_trigger:
                 
                 status_box.write("🧠 Analyzing technical specs & fraud...")
                 genai.configure(api_key=gemini_key)
-                model = genai.GenerativeModel('gemini-2.5-flash')
                 
-                # --- PROMPT UPDATES ---
+                # --- MODEL SET TO 1.5 FLASH (High Quota) ---
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                
                 prompt = f"""
                 You are Veritas, a technical product auditor. Analyze this webpage content.
 
@@ -212,9 +213,19 @@ if analysis_trigger:
                 Content:
                 {website_content}
                 """
-                response = model.generate_content(prompt)
                 
-                # --- FIX APPLIED HERE ---
+                # Simple retry logic for transient errors
+                try:
+                    response = model.generate_content(prompt)
+                except Exception as e:
+                    # If we hit a temporary glitch, wait 2 seconds and try once more
+                    if "429" in str(e):
+                        time.sleep(2)
+                        response = model.generate_content(prompt)
+                    else:
+                        raise e
+
+                # --- ROBUST PARSING APPLIED HERE ---
                 result = clean_and_parse_json(response.text)
                 
                 source_label = result.get("product_name", target_url[:30])
@@ -232,7 +243,9 @@ if analysis_trigger:
             elif analysis_trigger == "image" and uploaded_image:
                 status_box.write("👁️ Scanning visual elements...")
                 genai.configure(api_key=gemini_key)
-                model = genai.GenerativeModel('gemini-2.5-flash')
+                
+                # --- MODEL SET TO 1.5 FLASH (High Quota) ---
+                model = genai.GenerativeModel('gemini-1.5-flash')
                 
                 prompt = """
                 Analyze this image. Identify the product.
@@ -242,7 +255,7 @@ if analysis_trigger:
                 """
                 response = model.generate_content([prompt, uploaded_image])
                 
-                # --- FIX APPLIED HERE ---
+                # --- ROBUST PARSING APPLIED HERE ---
                 result = clean_and_parse_json(response.text)
                 
                 source_label = result.get("product_name", "Screenshot Upload")
@@ -260,7 +273,10 @@ if analysis_trigger:
 
         except Exception as e:
             status_box.update(label="❌ Error", state="error")
-            st.error(f"Something went wrong: {e}")
+            if "429" in str(e):
+                st.error("⏳ You are scanning too fast! Please wait a few seconds and try again.")
+            else:
+                st.error(f"Something went wrong: {e}")
             st.stop()
 
 
@@ -307,5 +323,4 @@ if analysis_trigger:
         
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
-            # This should now be a bulleted list string
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
