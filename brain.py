@@ -82,20 +82,20 @@ if analysis_trigger:
             if analysis_trigger == "link" and target_url:
                 status_box.write("🌐 Scouting the website...")
                 
-                # 1. Scrape with Firecrawl (New v1.0 Syntax)
+                # 1. Scrape with Firecrawl
                 app = Firecrawl(api_key=firecrawl_key)
                 
-                # UPDATED: We use 'formats' directly, not inside 'params'
-                scraped_data = app.scrape(target_url, formats=['markdown', 'json'])
+                # FIXED: We only ask for 'markdown'. 
+                # Removing 'json' prevents the API from expecting a schema.
+                scraped_data = app.scrape(target_url, formats=['markdown'])
                 
                 if not scraped_data:
                     raise Exception("Could not connect to website.")
 
-                # 2. Extract Data (Handling different response structures)
-                # Some versions put data in 'data' key, others at root
-                data_root = scraped_data.get('data', scraped_data)
-                website_content = data_root.get('markdown', '')[:20000]
-                metadata = data_root.get('metadata', {})
+                # 2. Extract Data
+                # The data is usually inside the 'markdown' key of the response
+                website_content = scraped_data.get('markdown', '')[:20000]
+                metadata = scraped_data.get('metadata', {})
                 product_image_url = metadata.get('og:image')
                 
                 # 3. Analyze with Gemini
