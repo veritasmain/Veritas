@@ -122,30 +122,31 @@ if analysis_trigger:
                     else:
                          product_image_url = getattr(metadata, 'og_image', None)
                 
-                status_box.write("🧠 Analyzing product quality & fraud...")
+                status_box.write("🧠 Analyzing technical specs & fraud...")
                 genai.configure(api_key=gemini_key)
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
-                # --- UPDATED PROMPT: UNIVERSAL CONSISTENCY ---
+                # --- UPDATED PROMPT: DEEP TECHNICAL REASONING ---
                 prompt = f"""
-                You are Veritas. Analyze this website content.
+                You are Veritas, a technical product auditor. Analyze this webpage content.
+
+                PHASE 1: TECHNICAL VERIFICATION (Deep Read)
+                - Read the product description CAREFULLY.
+                - Do not flag "contradictions" without context. 
+                  (Example: If it says "2400W" and "1400W", check if one is 'Total' and one is 'Per Zone'. If so, that is NOT a red flag.)
+                - Check for convertible features. (Example: "Double Drawer" might mean a single large drawer with a removable divider. If the text explains this, it is NOT misleading.)
                 
-                CRITICAL INSTRUCTION - PRODUCT CONSISTENCY:
-                - Judge the INTRINSIC QUALITY of the item itself, not just the seller.
-                - If this item is a known generic dropshipping product (e.g., "Galaxy Rose", "Levitating Pot", "Cheap Mini Projector"), give it the SAME LOW SCORE you would give it on any other site.
-                - A bad product on a nice website is still a bad product.
-                
-                SCORING RULES:
-                - If reviews mention failure ("broke", "weak"): Score < 45 (Red).
-                - If it's a generic gadget with no brand history: Score < 60 (Amber).
-                - Only give > 80 (Green) for reputable brands with verified durability.
+                PHASE 2: QUALITY & CONSISTENCY
+                - Judge the intrinsic quality. Is this a cheap dropshipped item?
+                - If reviews mention failure ("broke", "weak"), Score MUST be < 45.
+                - If the description is technically accurate but the product is junk, flag it as "Low Quality".
 
                 Return JSON:
                 - "product_name": Short name of the product.
                 - "score": 0-100.
-                - "verdict": Short title.
-                - "red_flags": [List of short strings].
-                - "key_complaints": [List of specific defects found].
+                - "verdict": Short title (e.g. "Safe & Accurate" or "Misleading Specs").
+                - "red_flags": [List of ACTUAL errors/scams].
+                - "key_complaints": [List of specific user complaints].
                 - "reviews_summary": "Short summary text."
 
                 Content:
