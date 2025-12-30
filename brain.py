@@ -61,35 +61,24 @@ uploaded_image = None
 analysis_trigger = False
 
 with input_tab1:
-    # 1. Add a key to the text input so we can clear it later
     target_url = st.text_input("Website URL (Amazon, Shopify, etc):", placeholder="https://...", key="url_input")
-    
-    # 2. Create two columns for the buttons
     col1, col2 = st.columns([1, 1])
-    
     with col1:
-        # The main Analyze button
         if st.button("Analyze Link", type="primary", use_container_width=True):
             analysis_trigger = "link"
-            
     with col2:
-        # The new "New Link" button (Orange/Primary style to match)
         if st.button("New Link", type="primary", use_container_width=True):
-            # This clears the text box and reloads the app
             st.session_state.url_input = "" 
             st.rerun()
 
 with input_tab2:
     uploaded_file = st.file_uploader("Upload an ad or text screenshot", type=["png", "jpg", "jpeg"], key="img_input")
-    
     col3, col4 = st.columns([1, 1])
     with col3:
         if uploaded_file and st.button("Analyze Screenshot", type="primary", use_container_width=True):
             uploaded_image = Image.open(uploaded_file)
             analysis_trigger = "image"
-            
     with col4:
-        # Clear button for images too
         if st.button("New Upload", type="primary", use_container_width=True):
             st.session_state.img_input = None
             st.rerun()
@@ -122,7 +111,9 @@ if analysis_trigger:
                     website_content = scraped_data.get('markdown', '')
                     metadata = scraped_data.get('metadata', {})
                 
-                website_content = str(website_content)[:30000]
+                # --- CHANGE 1: REMOVED TEXT LIMIT ---
+                # We send the WHOLE page now so we don't miss reviews at the bottom
+                website_content = str(website_content)
                 
                 if metadata:
                     if isinstance(metadata, dict):
@@ -132,23 +123,28 @@ if analysis_trigger:
                 
                 status_box.write("🧠 Analyzing product quality & fraud...")
                 genai.configure(api_key=gemini_key)
-                
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
+                # --- CHANGE 2: "HUNTER" PROMPT ---
                 prompt = f"""
-                You are Veritas. Analyze this website content for scam risks AND poor product quality.
+                You are Veritas. Analyze this website content.
                 
                 CRITICAL INSTRUCTION:
-                - Look closely at reviews and product descriptions.
-                - If you find complaints about functionality (e.g., "weak magnets", "broke immediately"), penalize the score heavily.
+                1. IGNORE marketing fluff ("High Quality", "Best Seller").
+                2. ACTIVELY HUNT for user reviews, especially negative ones. Look for keywords: "weak", "broke", "bad quality", "waste", "disappointed".
+                3. If *any* reviews mention product failure (e.g., weak magnets), the Score MUST be below 60.
                 
-                Return JSON with these keys:
-                - "product_name": Short, clear name of the product.
-                - "score": 0-100 (0=Scam/Junk, 100=Safe & Quality).
-                - "verdict": Short title (e.g. "Low Quality" or "Scam").
-                - "red_flags": List of strings explaining scam signs.
-                - "key_complaints": List of specific product defects found in text.
-                - "reviews_summary": Balanced summary of sentiment.
+                FORMATTING RULES:
+                - "red_flags": Short bullet points (max 8 words each).
+                - "reviews_summary": Extremely concise (max 2 sentences).
+                
+                Return JSON:
+                - "product_name": Short name of the product.
+                - "score": 0-100 (0=Junk/Scam, 100=Great).
+                - "verdict": Short title (e.g. "Low Quality").
+                - "red_flags": [List of short strings].
+                - "key_complaints": [List of specific defects found].
+                - "reviews_summary": "Short summary text."
 
                 Content:
                 {website_content}
@@ -161,15 +157,16 @@ if analysis_trigger:
             # --- PATH B: ANALYZE IMAGE ---
             elif analysis_trigger == "image" and uploaded_image:
                 status_box.write("👁️ Scanning visual elements...")
-                
                 genai.configure(api_key=gemini_key)
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 prompt = """
-                Analyze this image. Look for scam signs like fake prices, typos, or unrealistic claims.
+                Analyze this image. Look for scam signs or bad quality.
                 Return JSON with keys: 
-                "product_name": Short name of the item.
-                "score" (0-100), "verdict", "red_flags", "reviews_summary", "key_complaints".
+                "product_name", "score", "verdict", 
+                "red_flags" (Short bullet points), 
+                "reviews_summary" (Concise), 
+                "key_complaints".
                 """
                 response = model.generate_content([prompt, uploaded_image])
                 result = json.loads(clean_json(response.text))
@@ -194,31 +191,32 @@ if analysis_trigger:
                 color = "red" if score < 50 else "orange" if score < 80 else "green"
                 st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
                 st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Unknown')}</h3>", unsafe_allow_html=True)
+                
+                # Dynamic advice based on score
                 if score < 50:
-                    st.error("⛔ DO NOT BUY. High Risk or Poor Quality.")
+                    st.error("⛔ DO NOT BUY. Poor quality or scam detected.")
                 elif score < 80:
-                    st.warning("⚠️ Proceed with caution.")
+                    st.warning("⚠️ Mixed reviews. Expect quality issues.")
                 else:
-                    st.success("✅ Looks safe to proceed.")
+                    st.success("✅ Looks safe and well-reviewed.")
 
             with tab2:
                 st.subheader("Why?")
+                # --- CHANGE 3: Bullet points logic ---
                 for flag in result.get("red_flags", []):
-                    st.write(f"• {flag}")
+                    st.markdown(f"**•** {flag}")
 
             with tab3:
-                st.subheader("Public Consensus")
+                st.subheader("Consensus")
                 
                 complaints = result.get("key_complaints", [])
                 if complaints:
-                    st.error("🚨 Critical Quality Warnings:")
+                    st.error("🚨 Frequent Complaints:")
                     for complaint in complaints:
-                        st.write(f"• {complaint}")
-                    st.divider()
+                        st.markdown(f"**•** {complaint}")
                 
                 st.info(result.get("reviews_summary", "No reviews found."))
 
-            # Save History
             st.session_state.history.append({
                 "source": source_label,
                 "score": score,
@@ -229,7 +227,6 @@ if analysis_trigger:
             status_box.update(label="❌ Error", state="error")
             st.error(f"Something went wrong: {e}")
 
-        # --- BOTTOM RESET BUTTON (Optional, kept for convenience) ---
         st.divider()
         if st.button("🔄 Start New Search", type="secondary", use_container_width=True):
              st.rerun()
