@@ -4,10 +4,8 @@ from firecrawl import Firecrawl
 from PIL import Image
 import json
 import re
-import time
-import os
-import requests
 import traceback
+import os
 from io import BytesIO
 
 # --- PAGE CONFIGURATION ---
@@ -23,9 +21,10 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "playback_data" not in st.session_state:
     st.session_state.playback_data = None
-# FIX 1: Add a version counter for the file uploader
-if "uploader_key" not in st.session_state:
-    st.session_state.uploader_key = 0
+
+# Uploader ID for Key Rotation
+if "uploader_id" not in st.session_state:
+    st.session_state.uploader_id = 0
 
 # --- CALLBACKS ---
 def clear_url_input():
@@ -33,8 +32,7 @@ def clear_url_input():
     st.session_state.playback_data = None 
 
 def clear_img_input():
-    # FIX 2: Instead of setting to None, we increment the key to force a fresh widget
-    st.session_state.uploader_key += 1
+    st.session_state.uploader_id += 1
     st.session_state.playback_data = None
 
 def load_history_item(item):
@@ -50,8 +48,8 @@ with st.sidebar:
         st.caption("No searches yet.")
     else:
         for index, item in enumerate(reversed(st.session_state.history)):
-            col_hist1, col_hist2 = st.columns([3, 1])
-            with col_hist1:
+            col1, col2 = st.columns([3, 1])
+            with col1:
                 st.button(
                     f"{item['source']}", 
                     key=f"hist_btn_{index}", 
@@ -59,11 +57,9 @@ with st.sidebar:
                     on_click=load_history_item,
                     args=(item,)
                 )
-            with col_hist2:
-                # Score Safety Check
-                raw_score = item.get('score', 0)
-                score = int(raw_score) if isinstance(raw_score, (int, float)) else 0
-                
+            with col2:
+                raw = item.get('score', 0)
+                score = int(raw) if isinstance(raw, (int, float)) else 0
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
                 st.write(f"{color} {score}")
             st.caption(f"{item['verdict']}")
@@ -89,36 +85,23 @@ def get_api_keys():
     return gemini, firecrawl
 
 def clean_and_parse_json(response_text):
-    # 1. Try to find JSON block between ```json ... ```
     match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-    if match:
-        text = match.group(1)
-    else:
-        text = response_text.strip()
-    
-    # 2. Parse
+    text = match.group(1) if match else response_text.strip()
     try:
         return json.loads(text, strict=False)
     except json.JSONDecodeError:
-        sanitized_text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
+        sanitized = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
         try:
-            return json.loads(sanitized_text, strict=False)
+            return json.loads(sanitized, strict=False)
         except:
             return {}
 
 def extract_score_safely(result_dict):
-    """
-    Forces a valid integer score.
-    """
     raw = result_dict.get("score")
-    if isinstance(raw, (int, float)):
-        return int(raw)
-    
+    if isinstance(raw, (int, float)): return int(raw)
     if isinstance(raw, str):
         nums = re.findall(r'\d+', raw)
-        if nums:
-            return int(nums[0])
-            
+        if nums: return int(nums[0])
     return 50
 
 # --- SCRAPING ---
@@ -140,42 +123,35 @@ if not st.session_state.playback_data:
     uploaded_image = None
     analysis_trigger = False
 
-    # --- TAB 1: LINKS ---
     with tab1:
         target_url = st.text_input("Website URL:", key="url_input")
-        col1, col2 = st.columns([1, 1])
-        with col1:
+        c1, c2 = st.columns([1, 1])
+        with c1:
             if st.button("Analyze Link", type="primary", use_container_width=True):
                 analysis_trigger = "link"
-        with col2:
-             st.button("New Link", type="secondary", use_container_width=True, on_click=clear_url_input)
+        with c2:
+            st.button("New Link", type="secondary", use_container_width=True, on_click=clear_url_input)
             
-    # --- TAB 2: IMAGES ---
     with tab2:
-        # FIX 3: Use the dynamic key here
-        uploaded_file = st.file_uploader(
-            "Upload Screenshot", 
-            type=["png", "jpg", "jpeg"], 
-            key=f"img_input_{st.session_state.uploader_key}"
-        )
+        current_key = f"uploader_{st.session_state.uploader_id}"
+        uploaded_file = st.file_uploader("Upload Screenshot", type=["png", "jpg", "jpeg"], key=current_key)
         
-        col3, col4 = st.columns([1, 1])
-        with col3:
+        c3, c4 = st.columns([1, 1])
+        with c3:
             if uploaded_file and st.button("Analyze Screenshot", type="primary", use_container_width=True):
                 uploaded_image = Image.open(uploaded_file)
                 analysis_trigger = "image"
-        with col4:
+        with c4:
             st.button("New Upload", type="secondary", use_container_width=True, on_click=clear_img_input)
 
 else:
     analysis_trigger = "playback"
-    st.button("⬅️ Back to Search", on_click=close_playback)
+    st.button("⬅️ New Search", on_click=close_playback)
 
 
 # --- MAIN LOGIC ---
 if analysis_trigger:
     gemini_key, firecrawl_key = get_api_keys()
-    
     result = {}
     score = 0
     product_image_url = None
@@ -190,63 +166,43 @@ if analysis_trigger:
     # CASE 2: NEW ANALYSIS
     elif gemini_key and firecrawl_key:
         status_box = st.status("🕵️‍♂️ Veritas is investigating...", expanded=True)
-        
         try:
             client = genai.Client(api_key=gemini_key)
 
             # === PATH A: LINK ===
             if analysis_trigger == "link" and target_url:
-                status_box.write("🌐 Scouting the website...")
+                status_box.write("🌐 Scouting website...")
                 scraped_data = None
                 scrape_error = False
-                
                 try:
                     scraped_data = scrape_website(target_url, firecrawl_key)
-                    website_content = getattr(scraped_data, 'markdown', '')
-                    
-                    is_trap = len(str(website_content)) < 500 or "verify" in str(website_content).lower()
-                    if is_trap and "amazon" not in target_url.lower():
-                        scrape_error = True
-                except:
-                    scrape_error = True
+                    content = getattr(scraped_data, 'markdown', '')
+                    is_trap = len(str(content)) < 500 or "verify" in str(content).lower()
+                    if is_trap and "amazon" not in target_url.lower(): scrape_error = True
+                except: scrape_error = True
 
                 if not scrape_error and scraped_data:
-                    status_box.write("🧠 Reading page content...")
-                    website_content = getattr(scraped_data, 'markdown', '')
+                    status_box.write("🧠 Reading content...")
+                    content = getattr(scraped_data, 'markdown', '')
                     meta = getattr(scraped_data, 'metadata', {})
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
 
                     prompt = f"""
-                    You are Veritas. Analyze this product text.
-                    
-                    RUBRIC FOR SCORE (0-100):
-                    - 90-100: Trusted Brand, Real Specs, Known Retailer.
-                    - 60-89: Generic but functional, honest specs.
-                    - 0-59: Dropshipping junk, fake 4K/8K claims, fake reviews.
-
-                    TASK:
-                    1. Read the specs. Are they physically possible for the price?
-                    2. Look for "Warning Words" (e.g. "Upgraded", "Military Grade", "100000 Lumens").
-                    
-                    Return JSON: product_name, score (INTEGER ONLY), verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
-                    Content: {str(website_content)[:20000]}
+                    Analyze this product.
+                    RUBRIC (0-100): 90+=Verified Brand, 0-59=Dropship/Scam.
+                    TASK: Check specs for "impossible" claims (e.g. 100TB SSD for $10).
+                    Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
+                    Content: {str(content)[:20000]}
                     """
                     response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
-                
                 else:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     prompt = f"""
-                    I cannot access the page directly. URL: {target_url}
-                    
-                    1. EXTRACT ID: Find the ASIN or Goods ID in the URL.
-                    2. SEARCH: Google the ID + "Reddit" and "Review".
-                    3. VERIFY: Compare price history.
-                    
-                    RUBRIC:
-                    - If you find Reddit threads calling it a scam -> Score < 30.
-                    - If no results exist outside the store -> Score < 50.
-                    
-                    Return JSON: product_name, score (INTEGER ONLY), verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
+                    I cannot access page. URL: {target_url}
+                    1. EXTRACT ID (ASIN/GoodsID) from URL.
+                    2. SEARCH Google for ID + "Reddit" + "Review".
+                    3. SCORE LOW (<40) if only found on scam sites.
+                    Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
                     response = client.models.generate_content(
                         model='gemini-2.0-flash', contents=prompt,
@@ -255,25 +211,25 @@ if analysis_trigger:
 
             # === PATH B: IMAGE ===
             elif analysis_trigger == "image" and uploaded_image:
-                status_box.write("👁️ Reading text & checking reliability...")
+                status_box.write("👁️ Analyzing visual evidence...")
                 
                 prompt = """
                 YOU ARE A FORENSIC ANALYST.
                 
                 1. IDENTIFICATION (MANDATORY): 
-                   - Read EVERY text label on the device (e.g. "GTMEDIA", "N1", "4K").
-                   - If no text, describe it visually (e.g. "Black Night Vision Monocular").
-                   - Your 'product_name' MUST NOT be 'Unknown'. Make an educated guess.
+                   - Read EVERY text label (Model, Brand, Specs).
+                   - If no text, describe visually.
+                   - 'product_name' MUST NOT be 'Unknown'. Make a specific guess.
 
                 2. SEARCH ACTION: 
-                   - Use the text you found to Search Google (e.g. "GTMEDIA N1 reviews").
+                   - Search Google for the text/name you found.
                    - Check for "Same product cheaper" on AliExpress.
 
                 3. SCORING RUBRIC (0-100):
                    - Start at 80.
                    - Deduct 30 if exact image is found on AliExpress/Alibaba.
-                   - Deduct 20 if "4K" or "1080p" claims are proven false by reviewers.
-                   - Deduct 20 for "Toy Grade" build quality reviews.
+                   - Deduct 20 if specs (4K, 1080p) are proven false by reviews.
+                   - Deduct 20 for "Toy Grade" quality.
 
                 4. REVIEWS:
                    - Quote specific complaints (e.g. "Battery lasts 10 mins").
@@ -293,8 +249,7 @@ if analysis_trigger:
             score = extract_score_safely(result)
             
             final_name = result.get("product_name", "Unidentified Item")
-            if final_name in ["Unknown", "N/A"]: 
-                final_name = "Scanned Item (Generic)"
+            if final_name in ["Unknown", "N/A"]: final_name = "Scanned Item (Generic)"
 
             st.session_state.history.append({
                 "source": final_name,
@@ -303,11 +258,11 @@ if analysis_trigger:
                 "result": result,
                 "image_url": product_image_url
             })
-            status_box.update(label="✅ Investigation Complete", state="complete", expanded=False)
+            status_box.update(label="✅ Complete", state="complete", expanded=False)
 
         except Exception as e:
             status_box.update(label="❌ Error", state="error")
-            st.error(f"Error details: {str(e)}")
+            st.error(f"Details: {str(e)}")
             st.code(traceback.format_exc())
             st.stop()
 
@@ -322,22 +277,32 @@ if analysis_trigger:
     with col2:
         if display_image: st.image(display_image, caption="Evidence", width=200)
 
-    # Tabs
     t1, t2, t3 = st.tabs(["🛡️ Verdict", "💬 Reviews", "🚩 Analysis"])
     
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
-        st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Analysis Done')}</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Done')}</h3>", unsafe_allow_html=True)
         
-        if score <= 45: st.error("⛔ DO NOT BUY. Poor quality or scam detected.")
-        elif score < 80: st.warning("⚠️ Mixed reviews. Expect quality issues.")
-        else: st.success("✅ Looks safe and well-reviewed.")
+        # --- NEW TRANSPARENCY NOTE ---
+        with st.expander("ℹ️ Why is this score different on other sites?"):
+            st.info("""
+            **Veritas scores the Transaction Safety, not just the Item.**
+            
+            * **Amazon/Walmart (+5-10 Points):** Safer returns, warranty, and faster shipping reduce your risk.
+            * **Temu/AliExpress (-5-10 Points):** Higher risk of shipping damage, difficult returns, or 'bait & switch' tactics penalize the score.
+            
+            The product might be the same, but the **risk of losing your money** is different.
+            """)
+
+        if score <= 45: st.error("⛔ DO NOT BUY. Poor quality/scam.")
+        elif score < 80: st.warning("⚠️ Mixed reviews. Expect issues.")
+        else: st.success("✅ Safe and well-reviewed.")
 
     with t2:
         st.subheader("Consensus")
         if result.get("key_complaints"):
-            st.error("🚨 Frequent Complaints:")
+            st.error("🚨 Complaints:")
             for c in result.get("key_complaints", []): st.markdown(f"**•** {c}")
         st.info(result.get("reviews_summary", "No reviews found."))
 
