@@ -102,13 +102,11 @@ def clean_and_parse_json(response_text):
         try:
             return json.loads(sanitized_text, strict=False)
         except:
-            # 4. Fallback: Return empty dict (Caller handles logic)
             return {}
 
 def extract_score_safely(result_dict):
     """
-    Forces a valid integer score from the AI response.
-    Prioritizes the 'score' key, but falls back to regex searching the 'verdict'.
+    Forces a valid integer score.
     """
     # Attempt 1: Direct Key
     raw = result_dict.get("score")
@@ -143,19 +141,32 @@ if not st.session_state.playback_data:
     uploaded_image = None
     analysis_trigger = False
 
+    # --- TAB 1: LINKS ---
     with tab1:
         target_url = st.text_input("Website URL:", key="url_input")
-        if st.button("Analyze Link", type="primary", use_container_width=True):
-            analysis_trigger = "link"
+        # Restored the Two-Button Layout
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("Analyze Link", type="primary", use_container_width=True):
+                analysis_trigger = "link"
+        with col2:
+             st.button("New Link", type="secondary", use_container_width=True, on_click=clear_url_input)
             
+    # --- TAB 2: IMAGES ---
     with tab2:
         uploaded_file = st.file_uploader("Upload Screenshot", type=["png", "jpg", "jpeg"], key="img_input")
-        if uploaded_file and st.button("Analyze Screenshot", type="primary", use_container_width=True):
-            uploaded_image = Image.open(uploaded_file)
-            analysis_trigger = "image"
+        # Restored the Two-Button Layout
+        col3, col4 = st.columns([1, 1])
+        with col3:
+            if uploaded_file and st.button("Analyze Screenshot", type="primary", use_container_width=True):
+                uploaded_image = Image.open(uploaded_file)
+                analysis_trigger = "image"
+        with col4:
+            st.button("New Upload", type="secondary", use_container_width=True, on_click=clear_img_input)
+
 else:
     analysis_trigger = "playback"
-    st.button("⬅️ New Search", on_click=close_playback)
+    st.button("⬅️ Back to Search", on_click=close_playback)
 
 
 # --- MAIN LOGIC ---
@@ -239,25 +250,30 @@ if analysis_trigger:
                         config={'tools': [{'google_search': {}}]}
                     )
 
-            # === PATH B: IMAGE (FIXED ACCURACY) ===
+            # === PATH B: IMAGE (FIXED "UNKNOWN" ERROR) ===
             elif analysis_trigger == "image" and uploaded_image:
                 status_box.write("👁️ Reading text & checking reliability...")
                 
                 prompt = """
-                STEP 1: OCR & IDENTIFICATION
-                - Read EVERY word on the product/box in the image (Model #, Brand).
-                - Use these EXACT WORDS for your Google Search.
-                - Do NOT guess specifications. If the box says "4K", check if it's REAL 4K or "Upscaled".
+                YOU ARE A FORENSIC ANALYST.
+                
+                1. IDENTIFICATION (MANDATORY): 
+                   - Read EVERY text label on the device (e.g. "GTMEDIA", "N1", "4K").
+                   - If no text, describe it visually (e.g. "Black Night Vision Monocular").
+                   - Your 'product_name' MUST NOT be 'Unknown'. Make an educated guess.
 
-                STEP 2: SCORING RUBRIC (0-100)
-                - Start at 80.
-                - Deduct 30 if exact image is found on AliExpress/Alibaba.
-                - Deduct 20 if "4K" or "1080p" claims are proven false by reviewers.
-                - Deduct 20 for "Toy Grade" build quality reviews.
+                2. SEARCH ACTION: 
+                   - Use the text you found to Search Google (e.g. "GTMEDIA N1 reviews").
+                   - Check for "Same product cheaper" on AliExpress.
 
-                STEP 3: REVIEWS
-                - Find specific complaints (e.g. "Battery lasts 10 mins").
-                - Do NOT generalize. Quote the complaints.
+                3. SCORING RUBRIC (0-100):
+                   - Start at 80.
+                   - Deduct 30 if exact image is found on AliExpress/Alibaba.
+                   - Deduct 20 if "4K" or "1080p" claims are proven false by reviewers.
+                   - Deduct 20 for "Toy Grade" build quality reviews.
+
+                4. REVIEWS:
+                   - Quote specific complaints (e.g. "Battery lasts 10 mins").
 
                 Return JSON keys: 
                 "product_name", "score", "verdict", "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
@@ -273,9 +289,10 @@ if analysis_trigger:
             result = clean_and_parse_json(response.text)
             score = extract_score_safely(result)
             
-            # Fallback name if AI fails
+            # Final Fallback name if AI still fails
             final_name = result.get("product_name", "Unidentified Item")
-            if final_name == "Unknown": final_name = "Scanned Item (No Name)"
+            if final_name in ["Unknown", "N/A"]: 
+                final_name = "Scanned Item (Generic)"
 
             st.session_state.history.append({
                 "source": final_name,
