@@ -185,94 +185,109 @@ if analysis_trigger:
             # Initialize Client (New Library Syntax)
             client = genai.Client(api_key=gemini_key)
 
-            # --- PATH A: LINK ---
+            # --- PATH A: LINK (With Forensic ID Extraction) ---
             if analysis_trigger == "link" and target_url:
                 status_box.write("🌐 Scouting the website...")
-                scraped_data = scrape_website(target_url, firecrawl_key)
                 
-                if not scraped_data:
-                    raise Exception("Could not connect to website.")
-
-                # Extract Data safely from Firecrawl v3 Object
-                website_content = getattr(scraped_data, 'markdown', '')
-                metadata = getattr(scraped_data, 'metadata', {})
-                screenshot_url = getattr(scraped_data, 'screenshot', None)
+                # 1. Attempt to Scrape (The "Front Door" approach)
+                scraped_data = None
+                scrape_error = False
                 
-                # Metadata Image extraction
-                if isinstance(metadata, dict):
-                    product_image_url = metadata.get('og:image')
-                else:
-                    product_image_url = getattr(metadata, 'og_image', None)
-                
-                # --- ANTI-BOT CHECK (UPDATED) ---
-                # 1. Don't trigger on the word "verify" for Amazon (too many false positives)
-                is_amazon = "amazon" in target_url.lower()
-                suspicious_keyword = "verify" in str(website_content).lower() and not is_amazon
-                is_too_short = len(str(website_content)) < 500
-
-                if is_too_short or suspicious_keyword:
-                      if screenshot_url:
-                        status_box.write("🛡️ Anti-bot detected! Switching to Vision Mode...")
-                        img_response = requests.get(screenshot_url)
-                        uploaded_image = Image.open(BytesIO(img_response.content))
-                        analysis_trigger = "image" # Switch paths
-                        product_image_url = screenshot_url
-                      elif is_amazon:
-                        # Amazon special handling: Force proceed even if it looks weird
-                        status_box.write("⚠️ Amazon link detected. Proceeding with text analysis...")
-                      else:
-                        raise Exception("Site blocked the scraper and no screenshot was captured.")
-                else:
-                    # Standard Text Analysis
-                    status_box.write("🧠 Analyzing technical specs & fraud...")
+                try:
+                    scraped_data = scrape_website(target_url, firecrawl_key)
+                    website_content = getattr(scraped_data, 'markdown', '')
                     
+                    # Check if the scrape was actually a "Verify you are human" trap
+                    is_trap = len(str(website_content)) < 500 or "verify" in str(website_content).lower()
+                    if is_trap and "amazon" not in target_url.lower():
+                        scrape_error = True
+                        
+                except Exception:
+                    scrape_error = True
+
+                # 2. DECISION LOGIC
+                if not scrape_error and scraped_data:
+                    # --- SUCCESSFUL SCRAPE ---
+                    status_box.write("🧠 Reading page content directly...")
+                    website_content = getattr(scraped_data, 'markdown', '')
+                    metadata = getattr(scraped_data, 'metadata', {})
+                    
+                    # Extract image safely
+                    if isinstance(metadata, dict):
+                         product_image_url = metadata.get('og:image')
+                    else:
+                         product_image_url = getattr(metadata, 'og_image', None)
+
                     prompt = f"""
-                    You are Veritas, a technical product auditor. Analyze this webpage content.
-
-                    PHASE 1: TECHNICAL DEEP DIVE
-                    - Read specs CAREFULLY. Note context (e.g. "2400W max" vs "1200W rated").
-                    - Identify convertible features before flagging them as misleading.
+                    You are Veritas. Analyze this product page text.
                     
-                    PHASE 2: QUALITY & CONSISTENCY
-                    - Judge the intrinsic quality. Is this a cheap dropshipped item?
-                    - If reviews mention failure ("broke", "weak"), Score MUST be < 45.
-
-                    OUTPUT FORMATTING:
-                    1. "red_flags": Snappy bullet points (max 8 words).
-                    2. "detailed_technical_analysis": Must be a SINGLE STRING formatted with bullets (e.g. "- Observation 1\\n- Observation 2").
+                    PHASE 1: SPECS & CLAIMS
+                    - Analyze the technical claims (batteries, materials, power).
+                    - Flag "too good to be true" specs (e.g. "100TB SSD for $20").
+                    
+                    PHASE 2: QUALITY CHECK
+                    - Is this a generic dropshipped item? 
+                    - Look for grammatical errors or high-pressure sales tactics.
 
                     Return JSON:
-                    - "product_name": Short name.
-                    - "score": 0-100.
-                    - "verdict": Short title.
-                    - "red_flags": [List of snappy strings].
-                    - "detailed_technical_analysis": "Bulleted string."
-                    - "key_complaints": [List of specific user complaints].
-                    - "reviews_summary": "Short summary text."
+                    "product_name", "score", "verdict", "red_flags", "detailed_technical_analysis", "key_complaints", "reviews_summary".
 
                     Content:
                     {str(website_content)[:20000]}
                     """
                     
-                    try:
-                        response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
-                    except Exception as e:
-                        if "429" in str(e):
-                            time.sleep(2)
-                            response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
-                        else:
-                            raise e
+                    response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+                
+                else:
+                    # --- BLOCKED? USE "ID DETECTIVE" MODE ---
+                    status_box.write("🛡️ Site blocked the scraper. Switching to ID Investigation...")
+                    status_box.write("🔎 Extracting unique Product ID/SKU from URL to find matches...")
+                    
+                    # We pass the URL itself to Gemini and ask it to perform "Forensic ID Extraction"
+                    prompt = f"""
+                    I cannot access this website content directly because of anti-bot protection.
+                    
+                    URL: {target_url}
+                    
+                    YOUR MISSION:
+                    1. EXTRACT THE UNIQUE ID from the URL. 
+                       - If Amazon, find the ASIN (starts with B0...).
+                       - If Temu, find the 'goods_id' or number after 'p-'.
+                       - If AliExpress, find the numeric ID.
+                    
+                    2. USE GOOGLE SEARCH with that SPECIFIC ID to find:
+                       - "Reddit [ID] review"
+                       - Price tracking history for this ID.
+                       - Dropshipping listings sharing this same ID.
+                    
+                    3. If no ID is found, use the exact product slug/name from the URL.
+                    
+                    Return JSON:
+                    "product_name", "score", "verdict", "red_flags", "detailed_technical_analysis", "key_complaints", "reviews_summary".
+                    """
+                    
+                    # ENABLE GOOGLE SEARCH TOOL
+                    response = client.models.generate_content(
+                        model='gemini-2.0-flash', 
+                        contents=prompt,
+                        config={'tools': [{'google_search': {}}]}
+                    )
 
-                    result = clean_and_parse_json(response.text)
-                    source_label = result.get("product_name", target_url[:30])
+                # 3. PARSE & SAVE RESULTS
+                result = clean_and_parse_json(response.text)
+                source_label = result.get("product_name", target_url[:30])
+                
+                # If we have an image from the scrape, use it; otherwise leave blank
+                if 'product_image_url' not in locals():
+                    product_image_url = None
 
-                    st.session_state.history.append({
-                        "source": source_label,
-                        "score": result.get("score", 0),
-                        "verdict": result.get("verdict"),
-                        "result": result,
-                        "image_url": product_image_url
-                    })
+                st.session_state.history.append({
+                    "source": source_label,
+                    "score": result.get("score", 0),
+                    "verdict": result.get("verdict"),
+                    "result": result,
+                    "image_url": product_image_url
+                })
 
 
             # --- PATH B: IMAGE (With Google Search Grounding) ---
@@ -369,4 +384,5 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
+
 
