@@ -103,24 +103,34 @@ def clean_and_parse_json(response_text):
         except json.JSONDecodeError:
             return {}
 
-# --- SCRAPING (LOUD ERROR MODE) ---
-# We removed @st.cache temporarily so we can see fresh errors every time
+# --- SCRAPING (COMPATIBILITY FIX) ---
+@st.cache_data(ttl=3600, show_spinner=False)
 def scrape_website(url, api_key):
+    # Print for debugging
+    print(f"DEBUG: Connecting to Firecrawl with key ending in... {str(api_key)[-4:]}")
+    
     app = Firecrawl(api_key=api_key)
     
-    params = {
+    # Define settings
+    scrape_options = {
         'formats': ['markdown', 'screenshot'],
         'waitFor': 5000,
         'mobile': True
     }
-    
-    try:
-        print(f"DEBUG: Attempting to scrape {url}...")
-        return app.scrape(url, params=params)
-    except Exception as e:
-        # This will make the specific error appear on your red screen
-        raise Exception(f"FIRECRAWL ERROR: {e}")
 
+    try:
+        # ATTEMPT 1: The New "Flat" Way (Likely the fix)
+        # We pass arguments directly: scrape(url, formats=[...], mobile=True)
+        return app.scrape(url, **scrape_options)
+        
+    except TypeError:
+        # ATTEMPT 2: The "Positional" Way 
+        # (Some versions just want the dict as the second argument)
+        return app.scrape(url, scrape_options)
+        
+    except Exception as e:
+        # If both fail, show the real error
+        raise Exception(f"Scraper Failed: {e}")
 # --- INPUT LOGIC ---
 if not st.session_state.playback_data:
     input_tab1, input_tab2 = st.tabs(["🔗 Paste Link", "📸 Upload Screenshot"])
@@ -343,4 +353,5 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
+
 
