@@ -294,20 +294,21 @@ if analysis_trigger:
             if analysis_trigger == "image" and uploaded_image:
                 status_box.write("👁️ Identifying product & searching web for reviews...")
                 
+                # UPDATED: We now ask the AI to identify the product and Google it
                 prompt = """
                 1. Identify the product in this image (Name, Model, Brand).
                 2. USE GOOGLE SEARCH to find:
-                   - The real price across different retailers.
-                   - Common complaints and 1-star review patterns.
+                   - The real price across different retailers (Amazon, Walmart, etc.).
+                   - "Reddit [product] review" for honest opinions.
                    - Whether this is a known dropshipping scam item.
+                   - Cross-reference if this image exists on other sites under different names.
                 
                 Return JSON with keys: 
                 "product_name", "score", "verdict", 
                 "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
                 """
                 
-                # We enable Google Search so the AI can look up the product it sees
-                # Note: This requires the google-genai SDK to support tools config
+                # ENABLE GOOGLE SEARCH TOOL for Images
                 response = client.models.generate_content(
                     model='gemini-2.0-flash', 
                     contents=[prompt, uploaded_image],
@@ -346,6 +347,9 @@ if analysis_trigger:
     display_image = product_image_url if 'product_image_url' in locals() and product_image_url else None
     if analysis_trigger == "playback":
          display_image = st.session_state.playback_data.get("image_url")
+    # Also display uploaded image if in Image mode
+    if analysis_trigger == "image" and uploaded_image:
+         display_image = uploaded_image
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -384,5 +388,3 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
-
-
