@@ -1,5 +1,5 @@
 import streamlit as st
-from google import genai   # <--- THIS IS THE LINE (Line 2)
+from google import genai
 from firecrawl import Firecrawl
 from PIL import Image
 import json
@@ -57,7 +57,12 @@ with st.sidebar:
                     args=(item,)
                 )
             with col_hist2:
-                score = item['score']
+                # FIX 1: Ensure score is treated as a number in the sidebar too
+                raw_score = item.get('score')
+                score = 0
+                if isinstance(raw_score, (int, float)):
+                    score = int(raw_score)
+                
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
                 st.write(f"{color} {score}")
             st.caption(f"{item['verdict']}")
@@ -123,8 +128,6 @@ def scrape_website(url, _api_key):
             return app.scrape_url(url, params=params)
         
         # Method 2: Fallback for your specific version
-        # Your error logs indicate 'scrape' exists but accepts NO extra arguments.
-        # We must call it with just the URL.
         return app.scrape(url)
             
     except Exception as e:
@@ -174,7 +177,13 @@ if analysis_trigger:
     if analysis_trigger == "playback":
         data = st.session_state.playback_data
         result = data['result']
-        score = data['score']
+        
+        # FIX 2: Handle playback score safety
+        raw_score = data.get('score')
+        score = 0
+        if isinstance(raw_score, (int, float)):
+            score = int(raw_score)
+            
         st.success(f"📂 Loaded from History: {data['source']}")
 
     # CASE 2: NEW ANALYSIS
@@ -189,7 +198,7 @@ if analysis_trigger:
             if analysis_trigger == "link" and target_url:
                 status_box.write("🌐 Scouting the website...")
                 
-                # 1. Attempt to Scrape (The "Front Door" approach)
+                # 1. Attempt to Scrape
                 scraped_data = None
                 scrape_error = False
                 
@@ -197,7 +206,6 @@ if analysis_trigger:
                     scraped_data = scrape_website(target_url, firecrawl_key)
                     website_content = getattr(scraped_data, 'markdown', '')
                     
-                    # Check if the scrape was actually a "Verify you are human" trap
                     is_trap = len(str(website_content)) < 500 or "verify" in str(website_content).lower()
                     if is_trap and "amazon" not in target_url.lower():
                         scrape_error = True
@@ -212,7 +220,6 @@ if analysis_trigger:
                     website_content = getattr(scraped_data, 'markdown', '')
                     metadata = getattr(scraped_data, 'metadata', {})
                     
-                    # Extract image safely
                     if isinstance(metadata, dict):
                          product_image_url = metadata.get('og:image')
                     else:
@@ -243,7 +250,6 @@ if analysis_trigger:
                     status_box.write("🛡️ Site blocked the scraper. Switching to ID Investigation...")
                     status_box.write("🔎 Extracting unique Product ID/SKU from URL to find matches...")
                     
-                    # We pass the URL itself to Gemini and ask it to perform "Forensic ID Extraction"
                     prompt = f"""
                     I cannot access this website content directly because of anti-bot protection.
                     
@@ -264,7 +270,6 @@ if analysis_trigger:
                     "product_name", "score", "verdict", "red_flags", "detailed_technical_analysis", "key_complaints", "reviews_summary".
                     """
                     
-                    # ENABLE GOOGLE SEARCH TOOL
                     response = client.models.generate_content(
                         model='gemini-2.0-flash', 
                         contents=prompt,
@@ -275,13 +280,18 @@ if analysis_trigger:
                 result = clean_and_parse_json(response.text)
                 source_label = result.get("product_name", target_url[:30])
                 
-                # If we have an image from the scrape, use it; otherwise leave blank
                 if 'product_image_url' not in locals():
                     product_image_url = None
 
+                # FIX 3: Safety Cast before saving
+                raw_score = result.get("score")
+                score = 0
+                if isinstance(raw_score, (int, float)):
+                    score = int(raw_score)
+
                 st.session_state.history.append({
                     "source": source_label,
-                    "score": result.get("score", 0),
+                    "score": score,
                     "verdict": result.get("verdict"),
                     "result": result,
                     "image_url": product_image_url
@@ -292,7 +302,6 @@ if analysis_trigger:
             if analysis_trigger == "image" and uploaded_image:
                 status_box.write("👁️ Analyzing screenshot & Searching multiple sources...")
                 
-                # UPDATED PROMPT: Specific instruction to find the "White Label" version on other sites
                 prompt = """
                 1. ANALYZE the image to find the Product Name, Price, and Visual Features.
                 
@@ -307,7 +316,6 @@ if analysis_trigger:
                 "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
                 """
                 
-                # ENABLE GOOGLE SEARCH TOOL for Images
                 response = client.models.generate_content(
                     model='gemini-2.0-flash', 
                     contents=[prompt, uploaded_image],
@@ -317,19 +325,23 @@ if analysis_trigger:
                 )
                 
                 result = clean_and_parse_json(response.text)
-                
                 source_label = result.get("product_name", "Screenshot Upload")
+                
+                # FIX 4: Safety Cast before saving
+                raw_score = result.get("score")
+                score = 0
+                if isinstance(raw_score, (int, float)):
+                    score = int(raw_score)
                 
                 st.session_state.history.append({
                     "source": source_label,
-                    "score": result.get("score", 0),
+                    "score": score,
                     "verdict": result.get("verdict"),
                     "result": result,
                     "image_url": product_image_url
                 })
 
             status_box.update(label="✅ Analysis Complete!", state="complete", expanded=False)
-            score = result.get("score", 0)
 
         except Exception as e:
             status_box.update(label="❌ Error", state="error")
@@ -346,7 +358,6 @@ if analysis_trigger:
     display_image = product_image_url if 'product_image_url' in locals() and product_image_url else None
     if analysis_trigger == "playback":
          display_image = st.session_state.playback_data.get("image_url")
-    # Also display uploaded image if in Image mode
     if analysis_trigger == "image" and uploaded_image:
          display_image = uploaded_image
 
@@ -359,13 +370,16 @@ if analysis_trigger:
     tab1, tab2, tab3 = st.tabs(["🛡️ The Verdict", "💬 Reviews", "🚩 Reality Check"])
     
     with tab1:
-        color = "red" if score <= 45 else "orange" if score < 80 else "green"
-        st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
+        # FIX 5: Ensure score is definitely an integer here for the logic
+        safe_score = int(score) if isinstance(score, (int, float)) else 0
+        
+        color = "red" if safe_score <= 45 else "orange" if safe_score < 80 else "green"
+        st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{safe_score}</h1>", unsafe_allow_html=True)
         st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Unknown')}</h3>", unsafe_allow_html=True)
         
-        if score <= 45:
+        if safe_score <= 45:
             st.error("⛔ DO NOT BUY. Poor quality or scam detected.")
-        elif score < 80:
+        elif safe_score < 80:
             st.warning("⚠️ Mixed reviews. Expect quality issues.")
         else:
             st.success("✅ Looks safe and well-reviewed.")
@@ -387,4 +401,3 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
-
