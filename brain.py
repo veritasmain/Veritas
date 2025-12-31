@@ -1,14 +1,14 @@
 import streamlit as st
-import os
-import json
-import re
-import requests
-from io import BytesIO
-from PIL import Image
 from google import genai
 from firecrawl import Firecrawl
+from PIL import Image
+import json
+import re
+import os
+import requests
+from io import BytesIO
 
-# --- PAGE CONFIGURATION ---
+# --- PAGE CONFIGURATION (RESTORED) ---
 st.set_page_config(
     page_title="Veritas",
     page_icon="🛡️",
@@ -16,20 +16,28 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# --- STATE SETUP ---
+# --- STATE SETUP (RESTORED) ---
 if "history" not in st.session_state:
     st.session_state.history = []
 if "playback_data" not in st.session_state:
     st.session_state.playback_data = None
 
-# --- CALLBACKS ---
+# --- CALLBACKS (RESTORED) ---
+def clear_url_input():
+    st.session_state.url_input = ""
+    st.session_state.playback_data = None 
+
+def clear_img_input():
+    st.session_state.img_input = None
+    st.session_state.playback_data = None
+
 def load_history_item(item):
     st.session_state.playback_data = item
 
 def close_playback():
     st.session_state.playback_data = None
 
-# --- SIDEBAR ---
+# --- SIDEBAR (RESTORED RECENT SCANS) ---
 with st.sidebar:
     st.header("📜 Recent Scans")
     if not st.session_state.history:
@@ -38,8 +46,10 @@ with st.sidebar:
         for index, item in enumerate(reversed(st.session_state.history)):
             col1, col2 = st.columns([3, 1])
             with col1:
+                # History button
                 st.button(f"{item['source']}", key=f"h_{index}", on_click=load_history_item, args=(item,), use_container_width=True)
             with col2:
+                # Score indicator
                 s = item['score']
                 c = "🔴" if s <= 45 else "🟠" if s < 80 else "🟢"
                 st.write(f"{c} {s}")
@@ -54,12 +64,12 @@ with st.sidebar:
 st.title("Veritas 🛡️")
 st.caption("The Truth Filter for the Internet")
 
-# --- CORE FUNCTIONS ---
+# --- CORE FUNCTIONS (UPDATED FOR NEW APIS) ---
 def get_api_keys():
     gemini = st.secrets.get("GEMINI_KEY") or os.environ.get("GEMINI_API_KEY")
     firecrawl = st.secrets.get("FIRECRAWL_KEY") or os.environ.get("FIRECRAWL_API_KEY")
     if not gemini:
-        st.error("🔑 Gemini API Key missing!")
+        st.error("🔑 API Keys missing!")
     return gemini, firecrawl
 
 def clean_and_parse_json(text):
@@ -67,7 +77,7 @@ def clean_and_parse_json(text):
     try:
         return json.loads(text, strict=False)
     except:
-        # Fallback if AI gets chatty
+        # Emergency backup for messy AI responses
         match = re.search(r'\{.*\}', text, re.DOTALL)
         if match:
             try: return json.loads(match.group(), strict=False)
@@ -76,35 +86,25 @@ def clean_and_parse_json(text):
 
 def generate_with_fallback(prompt, image=None, api_key=None):
     client = genai.Client(api_key=api_key)
-    # 1.5-flash is best for speed/cost. 1.5-pro is the fallback.
-    models = ["gemini-1.5-flash", "gemini-1.5-pro"]
-    
-    for model_name in models:
+    # Tries Flash first (fast/cheap), then Pro
+    for model_name in ["gemini-1.5-flash", "gemini-1.5-pro"]:
         try:
             payload = [prompt, image] if image else [prompt]
             response = client.models.generate_content(model=model_name, contents=payload)
             return response.text
         except Exception as e:
-            if "429" in str(e): # Rate limit
-                continue
+            if "429" in str(e): continue
             raise e
-    raise Exception("All AI models are currently busy.")
+    raise Exception("AI is overloaded. Try again in 10s.")
 
-# --- THE NEW SCRAPER (v3 Syntax) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def scrape_website(url, api_key):
-    # 'Firecrawl' class replaces 'FirecrawlApp' in latest SDK
     app = Firecrawl(api_key=api_key)
-    params = {
-        'formats': ['markdown', 'screenshot'],
-        'waitFor': 3000,
-        'mobile': True
-    }
+    # Firecrawl v3: scrape() instead of scrape_url()
+    params = {'formats': ['markdown', 'screenshot'], 'waitFor': 3000, 'mobile': True}
     try:
-        # scrape_url is now just scrape()
         return app.scrape(url, params=params)
-    except Exception as e:
-        st.error(f"Scraper error: {e}")
+    except:
         return None
 
 # --- MAIN LOGIC ---
@@ -115,93 +115,91 @@ if not st.session_state.playback_data:
     with t1:
         target_url = st.text_input("Product URL:", key="url_input")
         if st.button("Analyze Link", type="primary"): trigger = "link"
+        st.button("Reset", on_click=clear_url_input)
     with t2:
         f = st.file_uploader("Upload Image", type=["png","jpg"], key="img_input")
         if f and st.button("Analyze Screenshot", type="primary"):
             uploaded_image = Image.open(f)
             trigger = "image"
-
+        st.button("Reset Image", on_click=clear_img_input)
 else:
     trigger = "playback"
     st.button("⬅️ Back", on_click=close_playback)
 
 if trigger:
-    gemini_key, firecrawl_key = get_api_keys()
+    gemini_key, fc_key = get_api_keys()
     result, score, img_url = {}, 0, None
 
     if trigger == "playback":
         d = st.session_state.playback_data
         result, score, img_url = d['result'], d['score'], d['image_url']
         st.success(f"📂 History: {d['source']}")
-
     elif gemini_key:
         status = st.status("🕵️‍♂️ Veritas is thinking...", expanded=True)
         try:
             raw_text_response = ""
             source_lbl = "Analysis"
 
-            if trigger == "link" and target_url and firecrawl_key:
+            if trigger == "link" and target_url and fc_key:
                 status.write("🌐 Accessing website...")
-                data = scrape_website(target_url, firecrawl_key)
-                
-                # Accessing Document object attributes (New v3 Style)
+                data = scrape_website(target_url, fc_key)
                 content = getattr(data, 'markdown', '')
                 scr_url = getattr(data, 'screenshot', None)
                 metadata = getattr(data, 'metadata', {})
-                img_url = metadata.get('og:image') if isinstance(metadata, dict) else getattr(metadata, 'og_image', None)
+                img_url = metadata.get('og_image') if hasattr(metadata, 'og_image') else metadata.get('og:image')
 
-                # Check for Temu/Anti-bot blocks (Empty or 'Verify' text)
+                # Temu/Anti-bot logic (Vision Fallback)
                 if len(content) < 300 or "verify" in content.lower():
                     if scr_url:
-                        status.write("🛡️ Block detected! Switching to Vision Mode...")
+                        status.write("🛡️ Block detected! Reading screenshot...")
                         res = requests.get(scr_url)
                         uploaded_image = Image.open(BytesIO(res.content))
-                        trigger = "image" # Force Vision processing
+                        trigger = "image"
+                        img_url = scr_url
                     else:
-                        raise Exception("Site blocked access and no screenshot was provided.")
+                        raise Exception("Scraper blocked and no screenshot available.")
                 else:
-                    status.write("🧠 Reading specifications...")
-                    prompt = f"Identify red flags, score (0-100), verdict, technical analysis, and review summary for this product text. Return strictly JSON.\n\n{content[:15000]}"
+                    status.write("🧠 Analyzing specs...")
+                    prompt = f"Extract red flags, score (0-100), verdict, detailed analysis, and key complaints in JSON format:\n\n{content[:15000]}"
                     raw_text_response = generate_with_fallback(prompt, api_key=gemini_key)
                     source_lbl = target_url[:30]
 
             if trigger == "image" and uploaded_image:
-                status.write("👁️ Analyzing visual data...")
-                prompt = "Analyze this product screenshot. Identify 'product_name', 'score' (0-100), 'verdict', 'red_flags', 'detailed_technical_analysis', 'key_complaints', 'reviews_summary'. Return JSON."
+                status.write("👁️ Analyzing visual evidence...")
+                prompt = "Analyze this product image. Provide 'product_name', 'score' (0-100), 'verdict', 'red_flags', 'detailed_technical_analysis', 'key_complaints', 'reviews_summary' in JSON format."
                 raw_text_response = generate_with_fallback(prompt, image=uploaded_image, api_key=gemini_key)
 
             result = clean_and_parse_json(raw_text_response)
             score = result.get("score", 0)
             
-            # Update History
+            # Save to history list
             st.session_state.history.append({
                 "source": result.get("product_name", source_lbl),
                 "score": score,
                 "verdict": result.get("verdict", "Analyzed"),
                 "result": result,
-                "image_url": img_url or scr_url
+                "image_url": img_url
             })
             status.update(label="✅ Analysis Complete", state="complete")
-
         except Exception as e:
-            status.update(label="❌ Analysis Failed", state="error")
+            status.update(label="❌ Error", state="error")
             st.error(e)
             st.stop()
 
-    # --- DISPLAY ---
+    # --- DISPLAY (RESTORED ORIGINAL TABS) ---
     st.divider()
-    if img_url: st.image(img_url, width=250)
+    if img_url: st.image(img_url, width=200)
     
-    tabs = st.tabs(["Verdict", "Reviews", "Tech Details"])
-    with tabs[0]:
-        color = "red" if score < 45 else "orange" if score < 80 else "green"
-        st.markdown(f"<h1 style='text-align:center;color:{color}'>{score}</h1>", unsafe_allow_html=True)
-        st.subheader(result.get("verdict", ""))
-        for flag in result.get("red_flags", []): st.write(f"🚩 {flag}")
+    t_res, t_rev, t_det = st.tabs(["Verdict", "Reviews", "Analysis"])
+    with t_res:
+        c = "red" if score < 45 else "orange" if score < 80 else "green"
+        st.markdown(f"<h1 style='text-align:center;color:{c}'>{score}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='text-align:center'>{result.get('verdict','')}</h3>", unsafe_allow_html=True)
+        for f in result.get("red_flags", []): st.write(f"🚩 {f}")
 
-    with tabs[1]:
-        st.info(result.get("reviews_summary", "Summary unavailable."))
-        for comp in result.get("key_complaints", []): st.warning(f"• {comp}")
+    with t_rev:
+        st.info(result.get("reviews_summary", "No reviews found"))
+        for c in result.get("key_complaints", []): st.warning(f"• {c}")
 
-    with tabs[2]:
-        st.markdown(result.get("detailed_technical_analysis", "No technical breakdown provided."))
+    with t_det:
+        st.markdown(result.get("detailed_technical_analysis", ""))
