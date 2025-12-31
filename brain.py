@@ -23,6 +23,9 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "playback_data" not in st.session_state:
     st.session_state.playback_data = None
+# FIX 1: Add a version counter for the file uploader
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
 
 # --- CALLBACKS ---
 def clear_url_input():
@@ -30,7 +33,8 @@ def clear_url_input():
     st.session_state.playback_data = None 
 
 def clear_img_input():
-    st.session_state.img_input = None
+    # FIX 2: Instead of setting to None, we increment the key to force a fresh widget
+    st.session_state.uploader_key += 1
     st.session_state.playback_data = None
 
 def load_history_item(item):
@@ -90,14 +94,12 @@ def clean_and_parse_json(response_text):
     if match:
         text = match.group(1)
     else:
-        # If no code blocks, assume the whole text is JSON
         text = response_text.strip()
     
     # 2. Parse
     try:
         return json.loads(text, strict=False)
     except json.JSONDecodeError:
-        # 3. If standard parse fails, try to "fix" it by removing control chars
         sanitized_text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
         try:
             return json.loads(sanitized_text, strict=False)
@@ -108,18 +110,15 @@ def extract_score_safely(result_dict):
     """
     Forces a valid integer score.
     """
-    # Attempt 1: Direct Key
     raw = result_dict.get("score")
     if isinstance(raw, (int, float)):
         return int(raw)
     
-    # Attempt 2: String parsing (e.g. "45/100")
     if isinstance(raw, str):
         nums = re.findall(r'\d+', raw)
         if nums:
             return int(nums[0])
             
-    # Attempt 3: Default to neutral 50 if totally failed
     return 50
 
 # --- SCRAPING ---
@@ -144,7 +143,6 @@ if not st.session_state.playback_data:
     # --- TAB 1: LINKS ---
     with tab1:
         target_url = st.text_input("Website URL:", key="url_input")
-        # Restored the Two-Button Layout
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.button("Analyze Link", type="primary", use_container_width=True):
@@ -154,8 +152,13 @@ if not st.session_state.playback_data:
             
     # --- TAB 2: IMAGES ---
     with tab2:
-        uploaded_file = st.file_uploader("Upload Screenshot", type=["png", "jpg", "jpeg"], key="img_input")
-        # Restored the Two-Button Layout
+        # FIX 3: Use the dynamic key here
+        uploaded_file = st.file_uploader(
+            "Upload Screenshot", 
+            type=["png", "jpg", "jpeg"], 
+            key=f"img_input_{st.session_state.uploader_key}"
+        )
+        
         col3, col4 = st.columns([1, 1])
         with col3:
             if uploaded_file and st.button("Analyze Screenshot", type="primary", use_container_width=True):
@@ -250,7 +253,7 @@ if analysis_trigger:
                         config={'tools': [{'google_search': {}}]}
                     )
 
-            # === PATH B: IMAGE (FIXED "UNKNOWN" ERROR) ===
+            # === PATH B: IMAGE ===
             elif analysis_trigger == "image" and uploaded_image:
                 status_box.write("👁️ Reading text & checking reliability...")
                 
@@ -289,7 +292,6 @@ if analysis_trigger:
             result = clean_and_parse_json(response.text)
             score = extract_score_safely(result)
             
-            # Final Fallback name if AI still fails
             final_name = result.get("product_name", "Unidentified Item")
             if final_name in ["Unknown", "N/A"]: 
                 final_name = "Scanned Item (Generic)"
@@ -306,7 +308,7 @@ if analysis_trigger:
         except Exception as e:
             status_box.update(label="❌ Error", state="error")
             st.error(f"Error details: {str(e)}")
-            st.code(traceback.format_exc()) # Show full error for debugging
+            st.code(traceback.format_exc())
             st.stop()
 
     # --- DISPLAY ---
