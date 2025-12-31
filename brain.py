@@ -1,5 +1,5 @@
 import streamlit as st
-from google import genai
+from google import genai   # <--- THIS IS THE LINE (Line 2)
 from firecrawl import Firecrawl
 from PIL import Image
 import json
@@ -387,3 +387,4 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
+
