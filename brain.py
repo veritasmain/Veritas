@@ -275,20 +275,30 @@ if analysis_trigger:
                     })
 
 
-            # --- PATH B: IMAGE ---
+            # --- PATH B: IMAGE (With Google Search Grounding) ---
             if analysis_trigger == "image" and uploaded_image:
-                status_box.write("👁️ Scanning visual elements...")
+                status_box.write("👁️ Identifying product & searching web for reviews...")
                 
                 prompt = """
-                Analyze this image. Identify the product.
+                1. Identify the product in this image (Name, Model, Brand).
+                2. USE GOOGLE SEARCH to find:
+                   - The real price across different retailers.
+                   - Common complaints and 1-star review patterns.
+                   - Whether this is a known dropshipping scam item.
+                
                 Return JSON with keys: 
                 "product_name", "score", "verdict", 
                 "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
                 """
                 
+                # We enable Google Search so the AI can look up the product it sees
+                # Note: This requires the google-genai SDK to support tools config
                 response = client.models.generate_content(
                     model='gemini-2.0-flash', 
-                    contents=[prompt, uploaded_image]
+                    contents=[prompt, uploaded_image],
+                    config={
+                        'tools': [{'google_search': {}}] 
+                    }
                 )
                 
                 result = clean_and_parse_json(response.text)
@@ -359,3 +369,4 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
+
