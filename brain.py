@@ -98,12 +98,30 @@ def clean_and_parse_json(response_text):
         except json.JSONDecodeError:
             return {}
 
-# --- CACHED SCRAPING ---
+# --- SCRAPING ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def scrape_website(url, api_key):
     app = Firecrawl(api_key=api_key)
-    return app.scrape(url, formats=['markdown'])
+    
+    # 1. Aggressive Anti-Bot settings
+    # We ask Firecrawl to wait 10 seconds (10000ms) to let "Checking Browser" screens finish.
+    params = {
+        'formats': ['markdown'],
+        'waitFor': 10000,   # Wait 10 seconds for the "Cloudflare" check to pass
+        'timeout': 60000,   # Allow up to 60 seconds total before giving up
+        'mobile': True      # Simulate a phone (often easier to bypass blocking)
+    }
 
+    try:
+        # Try the new method signature
+        return app.scrape(url, params)
+    except Exception:
+        try:
+            # Fallback for older SDK versions
+            return app.scrape_url(url, params=params)
+        except Exception as e:
+            # If it still fails, return the error so the AI can read it
+            return {"markdown": f"Scrape blocked by anti-bot protection. Error: {e}"}
 # --- INPUT LOGIC ---
 if not st.session_state.playback_data:
     input_tab1, input_tab2 = st.tabs(["🔗 Paste Link", "📸 Upload Screenshot"])
@@ -319,3 +337,4 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
+
