@@ -204,16 +204,23 @@ if analysis_trigger:
                 else:
                     product_image_url = getattr(metadata, 'og_image', None)
                 
-                # --- ANTI-BOT CHECK ---
-                # If text is blocked (too short or says "Verify"), switch to Vision Mode
-                if len(str(website_content)) < 500 or "verify" in str(website_content).lower():
-                     if screenshot_url:
+                # --- ANTI-BOT CHECK (UPDATED) ---
+                # 1. Don't trigger on the word "verify" for Amazon (too many false positives)
+                is_amazon = "amazon" in target_url.lower()
+                suspicious_keyword = "verify" in str(website_content).lower() and not is_amazon
+                is_too_short = len(str(website_content)) < 500
+
+                if is_too_short or suspicious_keyword:
+                      if screenshot_url:
                         status_box.write("🛡️ Anti-bot detected! Switching to Vision Mode...")
                         img_response = requests.get(screenshot_url)
                         uploaded_image = Image.open(BytesIO(img_response.content))
                         analysis_trigger = "image" # Switch paths
                         product_image_url = screenshot_url
-                     else:
+                      elif is_amazon:
+                        # Amazon special handling: Force proceed even if it looks weird
+                        status_box.write("⚠️ Amazon link detected. Proceeding with text analysis...")
+                      else:
                         raise Exception("Site blocked the scraper and no screenshot was captured.")
                 else:
                     # Standard Text Analysis
@@ -352,8 +359,3 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
-
-
-
-
-
