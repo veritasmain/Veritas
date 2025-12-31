@@ -1,10 +1,12 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 from firecrawl import Firecrawl
 from PIL import Image
 import json
 import re
-import time
+import os
+import requests
+from io import BytesIO
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -30,34 +32,25 @@ def clear_img_input():
     st.session_state.playback_data = None
 
 def load_history_item(item):
-    """Callback: Loads a specific history item into view immediately."""
     st.session_state.playback_data = item
 
 def close_playback():
-    """Callback: Exits playback mode."""
     st.session_state.playback_data = None
 
-# --- SIDEBAR: HISTORY ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("📜 Recent Scans")
     if not st.session_state.history:
         st.caption("No searches yet.")
     else:
         for index, item in enumerate(reversed(st.session_state.history)):
-            col_hist1, col_hist2 = st.columns([3, 1])
-            with col_hist1:
-                st.button(
-                    f"{item['source']}", 
-                    key=f"hist_btn_{index}", 
-                    use_container_width=True,
-                    on_click=load_history_item,
-                    args=(item,)
-                )
-            with col_hist2:
-                score = item['score']
-                color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
-                st.write(f"{color} {score}")
-            st.caption(f"{item['verdict']}")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.button(f"{item['source']}", key=f"h_{index}", on_click=load_history_item, args=(item,), use_container_width=True)
+            with col2:
+                s = item['score']
+                c = "🔴" if s <= 45 else "🟠" if s < 80 else "🟢"
+                st.write(f"{c} {s}")
             st.divider()
     
     if st.button("Clear History"):
@@ -65,276 +58,204 @@ with st.sidebar:
         st.session_state.playback_data = None
         st.rerun()
 
-# --- MAIN HEADER ---
+# --- HEADER ---
 st.title("Veritas 🛡️")
 st.caption("The Truth Filter for the Internet")
 
-# --- HELPER FUNCTIONS ---
+# --- CORE FUNCTIONS ---
 def get_api_keys():
+    gemini = None
+    firecrawl = None
     try:
-        return st.secrets["GEMINI_KEY"], st.secrets["FIRECRAWL_KEY"]
+        gemini = st.secrets.get("GEMINI_KEY")
+        firecrawl = st.secrets.get("FIRECRAWL_KEY")
     except:
-        st.error("🔑 API Keys missing! Add GEMINI_KEY and FIRECRAWL_KEY in Secrets.")
-        return None, None
+        pass
+    if not gemini:
+        gemini = os.environ.get("GEMINI_API_KEY")
+    if not firecrawl:
+        firecrawl = os.environ.get("FIRECRAWL_API_KEY")
 
-def clean_and_parse_json(response_text):
-    """
-    Strips Markdown, sanitizes control characters, and parses JSON safely.
-    Fixes the 'Invalid control character' error common with Gemini/Temu data.
-    """
-    # 1. Strip Markdown code blocks
-    text = re.sub(r'```json', '', response_text)
+    if not gemini:
+        st.error("🔑 Gemini API Key missing! Check .streamlit/secrets.toml or System Environment.")
+    return gemini, firecrawl
+
+def clean_and_parse_json(text):
+    text = re.sub(r'```json', '', text)
     text = re.sub(r'```', '', text)
     text = text.strip()
-
-    # 2. Try parsing normally first (allowing loose control chars if possible)
     try:
         return json.loads(text, strict=False)
     except json.JSONDecodeError:
-        # 3. If that fails, scrub invisible control characters (newlines/tabs inside strings)
-        sanitized_text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
+        text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
         try:
-            return json.loads(sanitized_text, strict=False)
-        except json.JSONDecodeError:
+            return json.loads(text, strict=False)
+        except:
             return {}
 
-# --- SCRAPING ---
+def generate_with_fallback(prompt, image=None, api_key=None):
+    client = genai.Client(api_key=api_key)
+    models_to_try = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
+
+    for model_name in models_to_try:
+        try:
+            contents_payload = [prompt]
+            if image:
+                contents_payload.append(image)
+
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents_payload
+            )
+            return response.text
+        except Exception as e:
+            print(f"⚠️ Model {model_name} failed: {e}. Switching to next...")
+            continue 
+    
+    raise Exception("All Gemini models are busy. Please wait 10 seconds and try again.")
+
+# --- SCRAPING (UPDATED FOR TEMU/ALIEXPRESS) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def scrape_website(url, api_key):
     app = Firecrawl(api_key=api_key)
     
-    # 1. Aggressive Anti-Bot settings
-    # We ask Firecrawl to wait 10 seconds (10000ms) to let "Checking Browser" screens finish.
+    # We request a screenshot AND text. If text fails, we use the screenshot.
     params = {
-        'formats': ['markdown'],
-        'waitFor': 10000,   # Wait 10 seconds for the "Cloudflare" check to pass
-        'timeout': 60000,   # Allow up to 60 seconds total before giving up
-        'mobile': True      # Simulate a phone (often easier to bypass blocking)
+        'formats': ['markdown', 'screenshot'],
+        'waitFor': 5000,   # Wait 5s for popups to clear
+        'timeout': 30000,
+        'mobile': True     # Mobile sites often have less security
     }
 
     try:
-        # Try the new method signature
         return app.scrape(url, params)
     except Exception:
-        try:
-            # Fallback for older SDK versions
-            return app.scrape_url(url, params=params)
-        except Exception as e:
-            # If it still fails, return the error so the AI can read it
-            return {"markdown": f"Scrape blocked by anti-bot protection. Error: {e}"}
-# --- INPUT LOGIC ---
-if not st.session_state.playback_data:
-    input_tab1, input_tab2 = st.tabs(["🔗 Paste Link", "📸 Upload Screenshot"])
+        # Fallback for older Firecrawl SDKs
+        return app.scrape_url(url, params=params)
 
+# --- MAIN LOGIC ---
+if not st.session_state.playback_data:
+    t1, t2 = st.tabs(["🔗 Paste Link", "📸 Upload Screenshot"])
     target_url = None
     uploaded_image = None
-    analysis_trigger = False
+    trigger = False
 
-    with input_tab1:
-        target_url = st.text_input("Website URL (Amazon, Shopify, etc):", placeholder="https://...", key="url_input")
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button("Analyze Link", type="primary", use_container_width=True):
-                analysis_trigger = "link"
-        with col2:
-            st.button("New Link", type="primary", use_container_width=True, on_click=clear_url_input)
-
-    with input_tab2:
-        uploaded_file = st.file_uploader("Upload an ad or text screenshot", type=["png", "jpg", "jpeg"], key="img_input")
-        col3, col4 = st.columns([1, 1])
-        with col3:
-            if uploaded_file and st.button("Analyze Screenshot", type="primary", use_container_width=True):
-                uploaded_image = Image.open(uploaded_file)
-                analysis_trigger = "image"
-        with col4:
-            st.button("New Upload", type="primary", use_container_width=True, on_click=clear_img_input)
+    with t1:
+        target_url = st.text_input("Product URL:", key="url_input")
+        if st.button("Analyze Link", type="primary"): trigger = "link"
+        st.button("Reset", on_click=clear_url_input)
+    with t2:
+        f = st.file_uploader("Upload Image", type=["png","jpg"], key="img_input")
+        if f and st.button("Analyze Screenshot", type="primary"):
+            uploaded_image = Image.open(f)
+            trigger = "image"
+        st.button("Reset Image", on_click=clear_img_input)
 
 else:
-    analysis_trigger = "playback"
-    st.button("⬅️ Back to Search", on_click=close_playback)
+    trigger = "playback"
+    st.button("⬅️ Back", on_click=close_playback)
 
-
-# --- MAIN LOGIC CONTROLLER ---
-if analysis_trigger:
+if trigger:
     gemini_key, firecrawl_key = get_api_keys()
-    
-    result = {}
-    score = 0
-    product_image_url = None
-    
-    # CASE 1: PLAYBACK
-    if analysis_trigger == "playback":
-        data = st.session_state.playback_data
-        result = data['result']
-        score = data['score']
-        st.success(f"📂 Loaded from History: {data['source']}")
+    result, score, img_url = {}, 0, None
 
-    # CASE 2: NEW ANALYSIS
-    elif gemini_key and firecrawl_key:
-        status_box = st.status("🕵️‍♂️ Veritas is investigating...", expanded=True)
-        
+    if trigger == "playback":
+        d = st.session_state.playback_data
+        result, score, img_url = d['result'], d['score'], d['image_url']
+        st.success(f"📂 History: {d['source']}")
+
+    elif gemini_key:
+        status = st.status("🕵️‍♂️ Veritas is thinking...", expanded=True)
         try:
-            # --- PATH A: LINK ---
-            if analysis_trigger == "link" and target_url:
-                status_box.write("🌐 Scouting the website...")
+            raw_text_response = ""
+            
+            # --- LINK ANALYSIS LOGIC ---
+            if trigger == "link" and target_url and firecrawl_key:
+                status.write("🌐 Reading website (and taking screenshot)...")
+                
                 scraped_data = scrape_website(target_url, firecrawl_key)
                 
-                if not scraped_data:
-                    raise Exception("Could not connect to website.")
+                # Unwrap list if necessary
+                if isinstance(scraped_data, list): scraped_data = scraped_data[0]
+                
+                # Extract Data
+                content = scraped_data.get('markdown', '')
+                screenshot_url = scraped_data.get('screenshot', None)
+                meta = scraped_data.get('metadata', {})
+                
+                # 1. Check if text is garbage/blocked
+                is_blocked = len(str(content)) < 500 or "verify" in str(content).lower() or "bot" in str(content).lower()
+                
+                if is_blocked and screenshot_url:
+                    status.write("🛡️ Anti-bot detected! Switching to Vision Mode...")
+                    # Download the screenshot from Firecrawl to use as image input
+                    response = requests.get(screenshot_url)
+                    uploaded_image = Image.open(BytesIO(response.content))
+                    trigger = "image" # Force switch to image logic
+                    img_url = screenshot_url
+                    source_lbl = target_url[:30]
+                else:
+                    # Standard Text Analysis
+                    status.write("🧠 Analyzing text specs...")
+                    prompt = f"""
+                    You are a product auditor. Analyze this text.
+                    Identify "red_flags" (short strings), "score" (0-100), "verdict" (short title), 
+                    "detailed_technical_analysis" (bulleted string), "key_complaints" (list), "reviews_summary".
+                    Return strictly valid JSON.
+                    Text: {str(content)[:15000]} 
+                    """
+                    raw_text_response = generate_with_fallback(prompt, api_key=gemini_key)
+                    source_lbl = target_url[:30]
+                    img_url = meta.get('og:image')
 
-                try:
-                    website_content = scraped_data.markdown
-                    metadata = scraped_data.metadata
-                except AttributeError:
-                    website_content = scraped_data.get('markdown', '')
-                    metadata = scraped_data.get('metadata', {})
-                
-                website_content = str(website_content)
-                
-                if metadata:
-                    if isinstance(metadata, dict):
-                         product_image_url = metadata.get('og:image')
-                    else:
-                         product_image_url = getattr(metadata, 'og_image', None)
-                
-                status_box.write("🧠 Analyzing technical specs & fraud...")
-                genai.configure(api_key=gemini_key)
-                
-                # --- UPDATED TO GEMINI 2.0 FLASH ---
-                # This model has the high free tier (1500 req/day) replacing 1.5
-                model = genai.GenerativeModel('gemini-2.0-flash')
-                
-                prompt = f"""
-                You are Veritas, a technical product auditor. Analyze this webpage content.
-
-                PHASE 1: TECHNICAL DEEP DIVE
-                - Read specs CAREFULLY. Note context (e.g. "2400W max" vs "1200W rated").
-                - Identify convertible features before flagging them as misleading.
-                
-                PHASE 2: QUALITY & CONSISTENCY
-                - Judge the intrinsic quality. Is this a cheap dropshipped item?
-                - If reviews mention failure ("broke", "weak"), Score MUST be < 45.
-
-                OUTPUT FORMATTING:
-                1. "red_flags": Snappy bullet points (max 8 words).
-                2. "detailed_technical_analysis": Must be a SINGLE STRING formatted with bullets (e.g. "- Observation 1\\n- Observation 2").
-
-                Return JSON:
-                - "product_name": Short name.
-                - "score": 0-100.
-                - "verdict": Short title.
-                - "red_flags": [List of snappy strings].
-                - "detailed_technical_analysis": "Bulleted string."
-                - "key_complaints": [List of specific user complaints].
-                - "reviews_summary": "Short summary text."
-
-                Content:
-                {website_content}
-                """
-                
-                try:
-                    response = model.generate_content(prompt)
-                except Exception as e:
-                    if "429" in str(e):
-                        time.sleep(2)
-                        response = model.generate_content(prompt)
-                    else:
-                        raise e
-
-                result = clean_and_parse_json(response.text)
-                
-                source_label = result.get("product_name", target_url[:30])
-
-                st.session_state.history.append({
-                    "source": source_label,
-                    "score": result.get("score", 0),
-                    "verdict": result.get("verdict"),
-                    "result": result,
-                    "image_url": product_image_url
-                })
-
-
-            # --- PATH B: IMAGE ---
-            elif analysis_trigger == "image" and uploaded_image:
-                status_box.write("👁️ Scanning visual elements...")
-                genai.configure(api_key=gemini_key)
-                
-                # --- UPDATED TO GEMINI 2.0 FLASH ---
-                model = genai.GenerativeModel('gemini-2.0-flash')
-                
+            # --- IMAGE ANALYSIS LOGIC ---
+            if trigger == "image" and uploaded_image:
+                status.write("👁️ Analyzing visual evidence...")
                 prompt = """
-                Analyze this image. Identify the product.
-                Return JSON with keys: 
-                "product_name", "score", "verdict", 
-                "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
+                Identify product from this image. Ignore 'verify' popups if possible.
+                Return JSON: "product_name", "score" (0-100), "verdict", 
+                "red_flags" (list), "detailed_technical_analysis", "key_complaints", "reviews_summary".
                 """
-                response = model.generate_content([prompt, uploaded_image])
-                result = clean_and_parse_json(response.text)
-                
-                source_label = result.get("product_name", "Screenshot Upload")
-                
-                st.session_state.history.append({
-                    "source": source_label,
-                    "score": result.get("score", 0),
-                    "verdict": result.get("verdict"),
-                    "result": result,
-                    "image_url": None
-                })
+                raw_text_response = generate_with_fallback(prompt, image=uploaded_image, api_key=gemini_key)
+                if not source_lbl: source_lbl = "Screenshot"
 
-            status_box.update(label="✅ Analysis Complete!", state="complete", expanded=False)
+            # Parse Results
+            result = clean_and_parse_json(raw_text_response)
             score = result.get("score", 0)
+            
+            st.session_state.history.append({
+                "source": result.get("product_name", source_lbl),
+                "score": score,
+                "verdict": result.get("verdict", "Analyzed"),
+                "result": result,
+                "image_url": img_url
+            })
+            
+            status.update(label="✅ Done!", state="complete", expanded=False)
 
         except Exception as e:
-            status_box.update(label="❌ Error", state="error")
-            if "429" in str(e):
-                st.error("⏳ You are scanning too fast! Please wait a few seconds and try again.")
-            else:
-                st.error(f"Something went wrong: {e}")
+            status.update(label="❌ Error", state="error")
+            st.error(f"Error: {e}")
             st.stop()
 
-
-    # --- DISPLAY RESULTS ---
+    # --- DISPLAY ---
     st.divider()
+    if img_url: 
+        try:
+            st.image(img_url, width=200)
+        except:
+            st.warning("Could not load product image.")
     
-    display_image = product_image_url if 'product_image_url' in locals() and product_image_url else None
-    if analysis_trigger == "playback":
-         display_image = st.session_state.playback_data.get("image_url")
+    t_res, t_rev, t_det = st.tabs(["Verdict", "Reviews", "Analysis"])
+    with t_res:
+        c = "red" if score < 45 else "orange" if score < 80 else "green"
+        st.markdown(f"<h1 style='text-align:center;color:{c}'>{score}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='text-align:center'>{result.get('verdict','')}</h3>", unsafe_allow_html=True)
+        for f in result.get("red_flags", []): st.write(f"🚩 {f}")
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if display_image:
-             st.image(display_image, caption="Product Verification", width=200)
-    
-    # --- UPDATED TAB ORDER ---
-    tab1, tab2, tab3 = st.tabs(["🛡️ The Verdict", "💬 Reviews", "🚩 Reality Check"])
-    
-    with tab1:
-        color = "red" if score <= 45 else "orange" if score < 80 else "green"
-        st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
-        st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Unknown')}</h3>", unsafe_allow_html=True)
-        
-        if score <= 45:
-            st.error("⛔ DO NOT BUY. Poor quality or scam detected.")
-        elif score < 80:
-            st.warning("⚠️ Mixed reviews. Expect quality issues.")
-        else:
-            st.success("✅ Looks safe and well-reviewed.")
+    with t_rev:
+        st.info(result.get("reviews_summary", "No reviews found"))
+        for c in result.get("key_complaints", []): st.warning(f"• {c}")
 
-    with tab2:
-        st.subheader("Consensus")
-        complaints = result.get("key_complaints", [])
-        if complaints:
-            st.error("🚨 Frequent Complaints:")
-            for complaint in complaints:
-                st.markdown(f"**•** {complaint}")
-        st.info(result.get("reviews_summary", "No reviews found."))
-
-    with tab3:
-        st.subheader("At a Glance")
-        for flag in result.get("red_flags", []):
-            st.markdown(f"**•** {flag}")
-        
-        st.write("") 
-        with st.expander("🔍 View Detailed Technical Analysis"):
-            st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
-
+    with t_det:
+        st.markdown(result.get("detailed_technical_analysis", ""))
