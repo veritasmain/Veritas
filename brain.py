@@ -1,10 +1,13 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 from firecrawl import Firecrawl
 from PIL import Image
 import json
 import re
 import time
+import os
+import requests
+from io import BytesIO
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -71,11 +74,13 @@ st.caption("The Truth Filter for the Internet")
 
 # --- HELPER FUNCTIONS ---
 def get_api_keys():
-    try:
-        return st.secrets["GEMINI_KEY"], st.secrets["FIRECRAWL_KEY"]
-    except:
-        st.error("🔑 API Keys missing! Add GEMINI_KEY and FIRECRAWL_KEY in Secrets.")
-        return None, None
+    # Try Secrets first, then Environment Variables
+    gemini = st.secrets.get("GEMINI_KEY") or os.environ.get("GEMINI_API_KEY")
+    firecrawl = st.secrets.get("FIRECRAWL_KEY") or os.environ.get("FIRECRAWL_API_KEY")
+    
+    if not gemini or not firecrawl:
+        st.error("🔑 API Keys missing! Check .streamlit/secrets.toml or System Environment.")
+    return gemini, firecrawl
 
 def clean_and_parse_json(response_text):
     """
@@ -87,11 +92,11 @@ def clean_and_parse_json(response_text):
     text = re.sub(r'```', '', text)
     text = text.strip()
 
-    # 2. Try parsing normally first (allowing loose control chars if possible)
+    # 2. Try parsing normally first
     try:
         return json.loads(text, strict=False)
     except json.JSONDecodeError:
-        # 3. If that fails, scrub invisible control characters (newlines/tabs inside strings)
+        # 3. If that fails, scrub invisible control characters
         sanitized_text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
         try:
             return json.loads(sanitized_text, strict=False)
@@ -102,7 +107,16 @@ def clean_and_parse_json(response_text):
 @st.cache_data(ttl=3600, show_spinner=False)
 def scrape_website(url, api_key):
     app = Firecrawl(api_key=api_key)
-    return app.scrape(url, formats=['markdown'])
+    # Added 'screenshot' and 'mobile' to handle Temu/AliExpress blocks
+    params = {
+        'formats': ['markdown', 'screenshot'],
+        'waitFor': 5000,
+        'mobile': True
+    }
+    try:
+        return app.scrape(url, params=params)
+    except:
+        return None
 
 # --- INPUT LOGIC ---
 if not st.session_state.playback_data:
@@ -156,6 +170,9 @@ if analysis_trigger:
         status_box = st.status("🕵️‍♂️ Veritas is investigating...", expanded=True)
         
         try:
+            # Initialize Client (New Library Syntax)
+            client = genai.Client(api_key=gemini_key)
+
             # --- PATH A: LINK ---
             if analysis_trigger == "link" and target_url:
                 status_box.write("🌐 Scouting the website...")
@@ -164,85 +181,84 @@ if analysis_trigger:
                 if not scraped_data:
                     raise Exception("Could not connect to website.")
 
-                try:
-                    website_content = scraped_data.markdown
-                    metadata = scraped_data.metadata
-                except AttributeError:
-                    website_content = scraped_data.get('markdown', '')
-                    metadata = scraped_data.get('metadata', {})
+                # Extract Data safely from Firecrawl v3 Object
+                website_content = getattr(scraped_data, 'markdown', '')
+                metadata = getattr(scraped_data, 'metadata', {})
+                screenshot_url = getattr(scraped_data, 'screenshot', None)
                 
-                website_content = str(website_content)
+                # Metadata Image extraction
+                if isinstance(metadata, dict):
+                    product_image_url = metadata.get('og:image')
+                else:
+                    product_image_url = getattr(metadata, 'og_image', None)
                 
-                if metadata:
-                    if isinstance(metadata, dict):
-                         product_image_url = metadata.get('og:image')
-                    else:
-                         product_image_url = getattr(metadata, 'og_image', None)
-                
-                status_box.write("🧠 Analyzing technical specs & fraud...")
-                genai.configure(api_key=gemini_key)
-                
-                # --- UPDATED TO GEMINI 2.0 FLASH ---
-                # This model has the high free tier (1500 req/day) replacing 1.5
-                model = genai.GenerativeModel('gemini-2.0-flash')
-                
-                prompt = f"""
-                You are Veritas, a technical product auditor. Analyze this webpage content.
+                # --- ANTI-BOT CHECK ---
+                # If text is blocked (too short or says "Verify"), switch to Vision Mode
+                if len(str(website_content)) < 500 or "verify" in str(website_content).lower():
+                     if screenshot_url:
+                        status_box.write("🛡️ Anti-bot detected! Switching to Vision Mode...")
+                        img_response = requests.get(screenshot_url)
+                        uploaded_image = Image.open(BytesIO(img_response.content))
+                        analysis_trigger = "image" # Switch paths
+                        product_image_url = screenshot_url
+                     else:
+                        raise Exception("Site blocked the scraper and no screenshot was captured.")
+                else:
+                    # Standard Text Analysis
+                    status_box.write("🧠 Analyzing technical specs & fraud...")
+                    
+                    prompt = f"""
+                    You are Veritas, a technical product auditor. Analyze this webpage content.
 
-                PHASE 1: TECHNICAL DEEP DIVE
-                - Read specs CAREFULLY. Note context (e.g. "2400W max" vs "1200W rated").
-                - Identify convertible features before flagging them as misleading.
-                
-                PHASE 2: QUALITY & CONSISTENCY
-                - Judge the intrinsic quality. Is this a cheap dropshipped item?
-                - If reviews mention failure ("broke", "weak"), Score MUST be < 45.
+                    PHASE 1: TECHNICAL DEEP DIVE
+                    - Read specs CAREFULLY. Note context (e.g. "2400W max" vs "1200W rated").
+                    - Identify convertible features before flagging them as misleading.
+                    
+                    PHASE 2: QUALITY & CONSISTENCY
+                    - Judge the intrinsic quality. Is this a cheap dropshipped item?
+                    - If reviews mention failure ("broke", "weak"), Score MUST be < 45.
 
-                OUTPUT FORMATTING:
-                1. "red_flags": Snappy bullet points (max 8 words).
-                2. "detailed_technical_analysis": Must be a SINGLE STRING formatted with bullets (e.g. "- Observation 1\\n- Observation 2").
+                    OUTPUT FORMATTING:
+                    1. "red_flags": Snappy bullet points (max 8 words).
+                    2. "detailed_technical_analysis": Must be a SINGLE STRING formatted with bullets (e.g. "- Observation 1\\n- Observation 2").
 
-                Return JSON:
-                - "product_name": Short name.
-                - "score": 0-100.
-                - "verdict": Short title.
-                - "red_flags": [List of snappy strings].
-                - "detailed_technical_analysis": "Bulleted string."
-                - "key_complaints": [List of specific user complaints].
-                - "reviews_summary": "Short summary text."
+                    Return JSON:
+                    - "product_name": Short name.
+                    - "score": 0-100.
+                    - "verdict": Short title.
+                    - "red_flags": [List of snappy strings].
+                    - "detailed_technical_analysis": "Bulleted string."
+                    - "key_complaints": [List of specific user complaints].
+                    - "reviews_summary": "Short summary text."
 
-                Content:
-                {website_content}
-                """
-                
-                try:
-                    response = model.generate_content(prompt)
-                except Exception as e:
-                    if "429" in str(e):
-                        time.sleep(2)
-                        response = model.generate_content(prompt)
-                    else:
-                        raise e
+                    Content:
+                    {str(website_content)[:20000]}
+                    """
+                    
+                    try:
+                        response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+                    except Exception as e:
+                        if "429" in str(e):
+                            time.sleep(2)
+                            response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+                        else:
+                            raise e
 
-                result = clean_and_parse_json(response.text)
-                
-                source_label = result.get("product_name", target_url[:30])
+                    result = clean_and_parse_json(response.text)
+                    source_label = result.get("product_name", target_url[:30])
 
-                st.session_state.history.append({
-                    "source": source_label,
-                    "score": result.get("score", 0),
-                    "verdict": result.get("verdict"),
-                    "result": result,
-                    "image_url": product_image_url
-                })
+                    st.session_state.history.append({
+                        "source": source_label,
+                        "score": result.get("score", 0),
+                        "verdict": result.get("verdict"),
+                        "result": result,
+                        "image_url": product_image_url
+                    })
 
 
             # --- PATH B: IMAGE ---
-            elif analysis_trigger == "image" and uploaded_image:
+            if analysis_trigger == "image" and uploaded_image:
                 status_box.write("👁️ Scanning visual elements...")
-                genai.configure(api_key=gemini_key)
-                
-                # --- UPDATED TO GEMINI 2.0 FLASH ---
-                model = genai.GenerativeModel('gemini-2.0-flash')
                 
                 prompt = """
                 Analyze this image. Identify the product.
@@ -250,7 +266,12 @@ if analysis_trigger:
                 "product_name", "score", "verdict", 
                 "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
                 """
-                response = model.generate_content([prompt, uploaded_image])
+                
+                response = client.models.generate_content(
+                    model='gemini-2.0-flash', 
+                    contents=[prompt, uploaded_image]
+                )
+                
                 result = clean_and_parse_json(response.text)
                 
                 source_label = result.get("product_name", "Screenshot Upload")
@@ -260,7 +281,7 @@ if analysis_trigger:
                     "score": result.get("score", 0),
                     "verdict": result.get("verdict"),
                     "result": result,
-                    "image_url": None
+                    "image_url": product_image_url
                 })
 
             status_box.update(label="✅ Analysis Complete!", state="complete", expanded=False)
