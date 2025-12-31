@@ -85,16 +85,44 @@ def get_api_keys():
     return gemini, firecrawl
 
 def clean_and_parse_json(response_text):
-    text = re.sub(r'```json', '', response_text)
-    text = re.sub(r'```', '', text).strip()
+    # 1. Try to find JSON block between ```json ... ```
+    match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+    if match:
+        text = match.group(1)
+    else:
+        # If no code blocks, assume the whole text is JSON
+        text = response_text.strip()
+    
+    # 2. Parse
     try:
         return json.loads(text, strict=False)
     except json.JSONDecodeError:
+        # 3. If standard parse fails, try to "fix" it by removing control chars
         sanitized_text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
         try:
             return json.loads(sanitized_text, strict=False)
         except:
+            # 4. Fallback: Return empty dict (Caller handles logic)
             return {}
+
+def extract_score_safely(result_dict):
+    """
+    Forces a valid integer score from the AI response.
+    Prioritizes the 'score' key, but falls back to regex searching the 'verdict'.
+    """
+    # Attempt 1: Direct Key
+    raw = result_dict.get("score")
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    
+    # Attempt 2: String parsing (e.g. "45/100")
+    if isinstance(raw, str):
+        nums = re.findall(r'\d+', raw)
+        if nums:
+            return int(nums[0])
+            
+    # Attempt 3: Default to neutral 50 if totally failed
+    return 50
 
 # --- SCRAPING ---
 @st.cache_data(ttl="24h", show_spinner=False)
@@ -142,11 +170,7 @@ if analysis_trigger:
     if analysis_trigger == "playback":
         data = st.session_state.playback_data
         result = data['result']
-        
-        # Safe Score Loading
-        raw_score = data.get('score', 0)
-        score = int(raw_score) if isinstance(raw_score, (int, float)) else 0
-            
+        score = extract_score_safely(result)
         st.success(f"📂 Loaded from History: {data['source']}")
 
     # CASE 2: NEW ANALYSIS
@@ -166,7 +190,6 @@ if analysis_trigger:
                     scraped_data = scrape_website(target_url, firecrawl_key)
                     website_content = getattr(scraped_data, 'markdown', '')
                     
-                    # Trap Detection
                     is_trap = len(str(website_content)) < 500 or "verify" in str(website_content).lower()
                     if is_trap and "amazon" not in target_url.lower():
                         scrape_error = True
@@ -181,7 +204,17 @@ if analysis_trigger:
 
                     prompt = f"""
                     You are Veritas. Analyze this product text.
-                    Return JSON: product_name, score (0-100), verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
+                    
+                    RUBRIC FOR SCORE (0-100):
+                    - 90-100: Trusted Brand, Real Specs, Known Retailer.
+                    - 60-89: Generic but functional, honest specs.
+                    - 0-59: Dropshipping junk, fake 4K/8K claims, fake reviews.
+
+                    TASK:
+                    1. Read the specs. Are they physically possible for the price?
+                    2. Look for "Warning Words" (e.g. "Upgraded", "Military Grade", "100000 Lumens").
+                    
+                    Return JSON: product_name, score (INTEGER ONLY), verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(website_content)[:20000]}
                     """
                     response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
@@ -190,35 +223,44 @@ if analysis_trigger:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     prompt = f"""
                     I cannot access the page directly. URL: {target_url}
-                    1. Extract the UNIQUE ID (ASIN/goods_id) from the URL.
-                    2. SEARCH Google for this ID + 'reviews' + 'scam'.
-                    3. Return JSON: product_name, score (0-100), verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
+                    
+                    1. EXTRACT ID: Find the ASIN or Goods ID in the URL.
+                    2. SEARCH: Google the ID + "Reddit" and "Review".
+                    3. VERIFY: Compare price history.
+                    
+                    RUBRIC:
+                    - If you find Reddit threads calling it a scam -> Score < 30.
+                    - If no results exist outside the store -> Score < 50.
+                    
+                    Return JSON: product_name, score (INTEGER ONLY), verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
                     response = client.models.generate_content(
                         model='gemini-2.0-flash', contents=prompt,
                         config={'tools': [{'google_search': {}}]}
                     )
 
-            # === PATH B: IMAGE (UPDATED DETECTIVE MODE) ===
+            # === PATH B: IMAGE (FIXED ACCURACY) ===
             elif analysis_trigger == "image" and uploaded_image:
-                status_box.write("👁️ Reading image text & Searching web...")
+                status_box.write("👁️ Reading text & checking reliability...")
                 
-                # --- THE FIX IS HERE: AGGRESSIVE TEXT READING PROMPT ---
                 prompt = """
-                1. TEXT EXTRACTION (CRITICAL): Read EVERY SINGLE WORD visible on the product or packaging in the image. (e.g. Look for "GTMEDIA", "N1", "4K", Model Numbers).
-                
-                2. SEARCH STRATEGY: 
-                   - Use the extracted text as your primary Google Search query (e.g. "GTMEDIA N1 review").
-                   - If no text is found, describe the object visually (e.g. "Black Night Vision Monocular") and search for that.
-                
-                3. VERIFY: Use the search results to find the REAL price and common complaints.
-                
-                4. RETURN JSON keys: 
+                STEP 1: OCR & IDENTIFICATION
+                - Read EVERY word on the product/box in the image (Model #, Brand).
+                - Use these EXACT WORDS for your Google Search.
+                - Do NOT guess specifications. If the box says "4K", check if it's REAL 4K or "Upscaled".
+
+                STEP 2: SCORING RUBRIC (0-100)
+                - Start at 80.
+                - Deduct 30 if exact image is found on AliExpress/Alibaba.
+                - Deduct 20 if "4K" or "1080p" claims are proven false by reviewers.
+                - Deduct 20 for "Toy Grade" build quality reviews.
+
+                STEP 3: REVIEWS
+                - Find specific complaints (e.g. "Battery lasts 10 mins").
+                - Do NOT generalize. Quote the complaints.
+
+                Return JSON keys: 
                 "product_name", "score", "verdict", "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
-                
-                IMPORTANT RULE: 
-                - If you find a brand name in the text, USE IT as the "product_name".
-                - DO NOT return "Unknown". If you can't find the name, use the visual description (e.g. "Generic Night Vision Device").
                 """
                 
                 response = client.models.generate_content(
@@ -229,12 +271,9 @@ if analysis_trigger:
 
             # PARSE & SAVE
             result = clean_and_parse_json(response.text)
+            score = extract_score_safely(result)
             
-            # Safe Score Handling
-            raw_score = result.get("score", 0)
-            score = int(raw_score) if isinstance(raw_score, (int, float)) else 0
-            
-            # Fallback name if AI still fails
+            # Fallback name if AI fails
             final_name = result.get("product_name", "Unidentified Item")
             if final_name == "Unknown": final_name = "Scanned Item (No Name)"
 
@@ -268,15 +307,12 @@ if analysis_trigger:
     t1, t2, t3 = st.tabs(["🛡️ Verdict", "💬 Reviews", "🚩 Analysis"])
     
     with t1:
-        # Final safety check for score display
-        safe_score = int(score) if isinstance(score, (int, float)) else 0
-        color = "red" if safe_score <= 45 else "orange" if safe_score < 80 else "green"
-        
-        st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{safe_score}</h1>", unsafe_allow_html=True)
+        color = "red" if score <= 45 else "orange" if score < 80 else "green"
+        st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
         st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Analysis Done')}</h3>", unsafe_allow_html=True)
         
-        if safe_score <= 45: st.error("⛔ DO NOT BUY. Poor quality or scam detected.")
-        elif safe_score < 80: st.warning("⚠️ Mixed reviews. Expect quality issues.")
+        if score <= 45: st.error("⛔ DO NOT BUY. Poor quality or scam detected.")
+        elif score < 80: st.warning("⚠️ Mixed reviews. Expect quality issues.")
         else: st.success("✅ Looks safe and well-reviewed.")
 
     with t2:
