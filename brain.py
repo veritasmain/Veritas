@@ -103,34 +103,30 @@ def clean_and_parse_json(response_text):
         except json.JSONDecodeError:
             return {}
 
-# --- SCRAPING (COMPATIBILITY FIX) ---
-@st.cache_data(ttl=3600, show_spinner=False)
-def scrape_website(url, api_key):
-    # Print for debugging
-    print(f"DEBUG: Connecting to Firecrawl with key ending in... {str(api_key)[-4:]}")
+# --- SCRAPING (CACHED MODE) ---
+@st.cache_data(ttl="24h", show_spinner=False)
+def scrape_website(url, _api_key):
+    # Note: We use _api_key with an underscore to prevent Streamlit from hashing it
+    app = Firecrawl(api_key=_api_key)
     
-    app = Firecrawl(api_key=api_key)
-    
-    # Define settings
-    scrape_options = {
+    params = {
         'formats': ['markdown', 'screenshot'],
         'waitFor': 5000,
         'mobile': True
     }
-
+    
     try:
-        # ATTEMPT 1: The New "Flat" Way (Likely the fix)
-        # We pass arguments directly: scrape(url, formats=[...], mobile=True)
-        return app.scrape(url, **scrape_options)
-        
-    except TypeError:
-        # ATTEMPT 2: The "Positional" Way 
-        # (Some versions just want the dict as the second argument)
-        return app.scrape(url, scrape_options)
-        
+        print(f"DEBUG: Attempting to scrape {url}...")
+        # FIX: specific call to 'scrape_url' handles the params dictionary correctly
+        if hasattr(app, 'scrape_url'):
+            return app.scrape_url(url, params=params)
+        else:
+            # Fallback for V1 SDKs that strictly use .scrape()
+            return app.scrape(url, scrapeOptions=params)
+            
     except Exception as e:
-        # If both fail, show the real error
-        raise Exception(f"Scraper Failed: {e}")
+        raise Exception(f"FIRECRAWL ERROR: {e}")
+
 # --- INPUT LOGIC ---
 if not st.session_state.playback_data:
     input_tab1, input_tab2 = st.tabs(["🔗 Paste Link", "📸 Upload Screenshot"])
@@ -353,5 +349,6 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
+
 
 
