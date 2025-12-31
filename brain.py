@@ -103,20 +103,23 @@ def clean_and_parse_json(response_text):
         except json.JSONDecodeError:
             return {}
 
-# --- CACHED SCRAPING ---
-@st.cache_data(ttl=3600, show_spinner=False)
+# --- SCRAPING (LOUD ERROR MODE) ---
+# We removed @st.cache temporarily so we can see fresh errors every time
 def scrape_website(url, api_key):
     app = Firecrawl(api_key=api_key)
-    # Added 'screenshot' and 'mobile' to handle Temu/AliExpress blocks
+    
     params = {
         'formats': ['markdown', 'screenshot'],
         'waitFor': 5000,
         'mobile': True
     }
+    
     try:
+        print(f"DEBUG: Attempting to scrape {url}...")
         return app.scrape(url, params=params)
-    except:
-        return None
+    except Exception as e:
+        # This will make the specific error appear on your red screen
+        raise Exception(f"FIRECRAWL ERROR: {e}")
 
 # --- INPUT LOGIC ---
 if not st.session_state.playback_data:
@@ -340,3 +343,4 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
+
