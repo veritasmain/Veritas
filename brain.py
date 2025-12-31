@@ -118,17 +118,18 @@ def scrape_website(url, _api_key):
     try:
         print(f"DEBUG: Attempting to scrape {url}...")
         
-        # Method 1: Try new V1 syntax (scrape_url)
+        # Method 1: Try new V1 syntax (most robust)
         if hasattr(app, 'scrape_url'):
             return app.scrape_url(url, params=params)
         
-        # Method 2: Fallback to standard .scrape() using 'params'
-        # We changed 'scrapeOptions' to 'params' to fix your error
-        return app.scrape(url, params=params)
+        # Method 2: Fallback for your specific version
+        # Your error logs indicate 'scrape' exists but accepts NO extra arguments.
+        # We must call it with just the URL.
+        return app.scrape(url)
             
     except Exception as e:
         raise Exception(f"FIRECRAWL ERROR: {e}")
-        
+
 # --- INPUT LOGIC ---
 if not st.session_state.playback_data:
     input_tab1, input_tab2 = st.tabs(["🔗 Paste Link", "📸 Upload Screenshot"])
@@ -351,6 +352,7 @@ if analysis_trigger:
         st.write("") 
         with st.expander("🔍 View Detailed Technical Analysis"):
             st.markdown(result.get("detailed_technical_analysis", "No detailed analysis available."))
+
 
 
 
