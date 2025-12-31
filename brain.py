@@ -250,17 +250,15 @@ if analysis_trigger:
                     URL: {target_url}
                     
                     YOUR MISSION:
-                    1. EXTRACT THE UNIQUE ID from the URL. 
-                       - If Amazon, find the ASIN (starts with B0...).
-                       - If Temu, find the 'goods_id' or number after 'p-'.
-                       - If AliExpress, find the numeric ID.
+                    1. EXTRACT THE UNIQUE ID from the URL (ASIN, goods_id, or Item ID).
                     
-                    2. USE GOOGLE SEARCH with that SPECIFIC ID to find:
-                       - "Reddit [ID] review"
-                       - Price tracking history for this ID.
-                       - Dropshipping listings sharing this same ID.
+                    2. PERFORM A BROAD WEB SEARCH (Do NOT limit to Amazon):
+                       - Search "Reddit [ID] review" to find honest forum discussions.
+                       - Search the ID on YouTube to find video reviews/teardowns.
+                       - Check Trustpilot, ScamAdviser, and other fraud databases.
+                       - Compare the price on this URL vs. AliExpress/Alibaba listings of the same item.
                     
-                    3. If no ID is found, use the exact product slug/name from the URL.
+                    3. If no ID is found, search for the product SLUG/Name combined with "scam" or "review".
                     
                     Return JSON:
                     "product_name", "score", "verdict", "red_flags", "detailed_technical_analysis", "key_complaints", "reviews_summary".
@@ -290,18 +288,19 @@ if analysis_trigger:
                 })
 
 
-            # --- PATH B: IMAGE (With Google Search Grounding) ---
+            # --- PATH B: IMAGE (With "Visual Detective" Mode) ---
             if analysis_trigger == "image" and uploaded_image:
-                status_box.write("👁️ Identifying product & searching web for reviews...")
+                status_box.write("👁️ Analyzing screenshot & Searching multiple sources...")
                 
-                # UPDATED: We now ask the AI to identify the product and Google it
+                # UPDATED PROMPT: Specific instruction to find the "White Label" version on other sites
                 prompt = """
-                1. Identify the product in this image (Name, Model, Brand).
-                2. USE GOOGLE SEARCH to find:
-                   - The real price across different retailers (Amazon, Walmart, etc.).
-                   - "Reddit [product] review" for honest opinions.
-                   - Whether this is a known dropshipping scam item.
-                   - Cross-reference if this image exists on other sites under different names.
+                1. ANALYZE the image to find the Product Name, Price, and Visual Features.
+                
+                2. PERFORM A BROAD WEB SEARCH (Do NOT limit to Amazon):
+                   - Search for the visual match on Reddit, YouTube, TikTok, and independent blogs.
+                   - Look for "scam" or "warning" posts on fraud-alert websites associated with this image.
+                   - Compare prices: Is this exact image on AliExpress for 10x less?
+                   - If it's a generic item, find reviews for the "White Label" version (e.g., same factory, different logo).
                 
                 Return JSON with keys: 
                 "product_name", "score", "verdict", 
