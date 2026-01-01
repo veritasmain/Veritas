@@ -203,16 +203,23 @@ if analysis_trigger:
                     - 30-45: SIGNIFICANT ISSUES. (If reviews say "Trash", "Broken", or "Features don't work", MAX SCORE IS 45. DO NOT GIVE 60+).
                     - 50-75: DECENT / AVERAGE.
                     - 80-100: EXCELLENT.
+                    
+                    **PLATFORM PENALTY CAP:**
+                    - If the product is on Temu/AliExpress vs Amazon: Deduct MAX 10 POINTS for platform risk (shipping/returns).
+                    - DO NOT deduct more than 10 points solely because of the website. Score based on the PRODUCT QUALITY.
 
-                    TASK 1: SHORT VERDICT
+                    TASK 1: EXACT NAMING
+                    - "product_name": EXTRACT THE EXACT BRAND AND MODEL (e.g. "GTMEDIA N1"). Do NOT use generic names like "Night Vision Device" unless no brand exists.
+
+                    TASK 2: SHORT VERDICT
                     - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
 
-                    TASK 2: MARKET COMPARISON
+                    TASK 3: MARKET COMPARISON
                     - "detailed_technical_analysis": JSON OBJECT (Headers -> Bullets).
                     - PRICE: Use relative terms ("Cheaper", "Similar"). No exact prices.
                     - SPECS: Do NOT guess. If specs differ, say "Not as advertised on verified sources".
 
-                    TASK 3: REVIEW SOURCING
+                    TASK 4: REVIEW SOURCING
                     - "reviews_summary": LIST of strings. Full sentences citing sources.
                     - "key_complaints": LIST of strings. "Feature: Specific failure".
 
@@ -230,11 +237,13 @@ if analysis_trigger:
                     - 0-25: SCAM.
                     - 30-45: TRASH / BROKEN (Max score 45 if functional issues exist).
                     
+                    **PLATFORM PENALTY CAP:** Max 10 points deduction for platform risk.
+                    
                     OUTPUT REQUIREMENTS:
+                    - "product_name": EXACT BRAND & MODEL.
                     - "verdict": SHORT & PUNCHY (Max 15 words).
                     - "reviews_summary": LIST of strings. Detailed summaries per source.
                     - "detailed_technical_analysis": JSON OBJECT.
-                    - SPECS: Say "Not as advertised on verified sources" if conflicting.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -252,12 +261,17 @@ if analysis_trigger:
                 
                 STEP 1: IDENTIFY & SEARCH
                 - Extract text from the image. SEARCH Google for this item on Amazon/Reddit.
+                - "product_name": EXTRACT EXACT BRAND & MODEL (e.g. "GTMEDIA N1"). Avoid generic names.
                 
                 STEP 2: STRICT SCORING (MULTIPLES OF 5 ONLY):
                    - 0-25: SCAM (Fake item/Dangerous).
                    - 30-45: FAILED PRODUCT (If reviews mention "trash", "broken", or "doesn't work", MAX SCORE IS 45).
                    - 50-75: AVERAGE (Works as intended).
                    - 80-100: EXCELLENT.
+                   
+                **PLATFORM PENALTY CAP:**
+                   - If screenshot is from Temu/AliExpress: Deduct MAX 10 POINTS for platform risk.
+                   - If the product itself is good, it should still score decently (e.g. 65-75).
 
                 STEP 3: VERDICT
                    - SHORT and PUNCHY (Max 15 words).
@@ -324,8 +338,8 @@ if analysis_trigger:
         with st.expander("ℹ️ Why is this score different on other sites?"):
             st.info("""
             **Veritas scores the Transaction Safety, not just the Item.**
-            * **Amazon/Walmart (+5-10 pts):** Safer returns, warranty, faster shipping.
-            * **Temu/AliExpress (-5-10 pts):** Higher risk of shipping damage or returns.
+            * **Amazon/Walmart:** Safer returns, warranty, faster shipping.
+            * **Temu/AliExpress:** Deducts max 10 points for shipping/return risks.
             """)
 
         if score <= 45: st.error("⛔ DO NOT BUY. Poor quality/scam.")
