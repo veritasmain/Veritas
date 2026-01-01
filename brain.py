@@ -222,6 +222,29 @@ if analysis_trigger:
         
         try:
             client = genai.Client(api_key=gemini_key)
+            
+            # --- GLOBAL CONSISTENCY RULES (Applied to ALL paths) ---
+            consistency_rules = """
+            MANDATORY SCORING ALGORITHM (DO NOT DEVIATE):
+
+            RULE 1: PLATFORM BLINDNESS
+            - Treat this product as if it is sold on AliExpress, even if the link is Amazon/Walmart.
+            - Ignore all "Star Ratings" provided in the text. They are likely fake.
+            
+            RULE 2: THE CHEAP TECH CEILING (STRICT)
+            - IF the product is a (Drone OR Projector OR Smartwatch OR Earbuds) AND Price is < $60:
+            - THEN the Score MUST BE between 10 and 45.
+            - IT IS FORBIDDEN to score > 45 for cheap generic electronics.
+
+            RULE 3: THE IMPOSSIBLE SPEC PENALTY
+            - IF product claims "8K", "16TB", "Pro GPS" but is cheap -> SCORE = 10 (SCAM).
+            
+            SCORE GUIDE:
+            - 10-25: Scam / Fake Specs.
+            - 30-45: Cheap / Drop-shipped / Misleading.
+            - 50-65: Verified functional but mediocre.
+            - 70-100: Top Tier (Sony/DJI/Apple quality only).
+            """
 
             # === PATH A: LINK ANALYSIS ===
             if analysis_trigger == "link" and target_url:
@@ -252,29 +275,6 @@ if analysis_trigger:
                         except:
                             pass
                 
-                # DICTATOR MODE PROMPT
-                consistency_rules = """
-                MANDATORY SCORING ALGORITHM (DO NOT DEVIATE):
-
-                RULE 1: PLATFORM BLINDNESS
-                - Treat this product as if it is sold on AliExpress, even if the link is Amazon/Walmart.
-                - Ignore all "Star Ratings" provided in the text. They are likely fake.
-                
-                RULE 2: THE CHEAP TECH CEILING (STRICT)
-                - IF the product is a (Drone OR Projector OR Smartwatch OR Earbuds) AND Price is < $60:
-                - THEN the Score MUST BE between 10 and 45.
-                - IT IS FORBIDDEN to score > 45 for cheap generic electronics.
-
-                RULE 3: THE IMPOSSIBLE SPEC PENALTY
-                - IF product claims "8K", "16TB", "Pro GPS" but is cheap -> SCORE = 10 (SCAM).
-                
-                SCORE GUIDE:
-                - 10-25: Scam / Fake Specs.
-                - 30-45: Cheap / Drop-shipped / Misleading.
-                - 50-65: Verified functional but mediocre.
-                - 70-100: Top Tier (Sony/DJI/Apple quality only).
-                """
-
                 # 1. Primary Analysis
                 if not scrape_error and scraped_data:
                     meta = getattr(scraped_data, 'metadata', {})
