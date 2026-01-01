@@ -207,9 +207,10 @@ if analysis_trigger:
                     TASK 1: SHORT VERDICT
                     - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
 
-                    TASK 2: MARKET COMPARISON (CRITICAL)
+                    TASK 2: MARKET COMPARISON (CRITICAL - NO EXACT PRICES)
                     - "detailed_technical_analysis": MUST be a JSON OBJECT. Keys are HEADERS, Values are LISTS of bullet points.
-                    - Example: {{"Price Analysis": ["Temu: $15", "Amazon: $45"], "Spec Check": ["Battery fake", "Lens plastic"]}}
+                    - DO NOT guess specific prices (e.g. "$14.50").
+                    - USE RELATIVE TERMS: "Found for ~50% less on AliExpress", "Similar price to competitors", "Significantly more expensive than average".
 
                     TASK 3: REVIEW SOURCING
                     - "reviews_summary": LIST of strings. Each string must be a full sentence citing a source.
@@ -233,6 +234,7 @@ if analysis_trigger:
                     - "verdict": SHORT & PUNCHY (Max 15 words).
                     - "reviews_summary": LIST of strings. Detailed summaries per source.
                     - "detailed_technical_analysis": JSON OBJECT. Keys = Headers, Values = List of strings.
+                    - PRICE RULE: Use terms like "Cheaper", "Similar", "Markup detected". No exact currency.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -254,18 +256,18 @@ if analysis_trigger:
                 - IGNORE the screenshot's claims until verified against these external searches.
                 
                 STEP 2: SCORING (MULTIPLES OF 5 ONLY):
-                   - 0-25: SCAM/FAKE (Image matches a known scam product, or price is impossible).
-                   - 30-55: POOR VALUE (Found identical item on AliExpress for 50% less).
+                   - 0-25: SCAM/FAKE (Image matches a known scam product).
+                   - 30-55: POOR VALUE (Found identical item elsewhere for much less).
                    - 60-100: LEGIT (Product matches reputable listings).
 
                 STEP 3: VERDICT
                    - SHORT and PUNCHY (Max 15 words).
 
-                STEP 4: CROSS-REFERENCE ANALYSIS (STRUCTURED)
+                STEP 4: CROSS-REFERENCE ANALYSIS (STRUCTURED JSON)
                    - "detailed_technical_analysis": Return a JSON OBJECT.
                    - Keys are Headers (e.g. "Price Arbitrage Check", "Spec Verification").
                    - Values are LISTS of bullet points.
-                   - Example: {{"AliExpress Match": ["Found identical item for $5", "Screenshot price is $50"]}}
+                   - PRICE RULE: DO NOT use specific prices (e.g. "$12.99"). Use RELATIVE terms: "Cheaper on AliExpress", "Markup of approx 200% detected", "Price is consistent with market".
 
                 STEP 5: REVIEWS
                    - "reviews_summary": LIST of strings. Detailed 2-3 sentence summaries per source.
@@ -346,7 +348,6 @@ if analysis_trigger:
         st.subheader("Source Summaries")
         reviews_data = result.get("reviews_summary", [])
         
-        # Handle List vs String vs None
         if isinstance(reviews_data, list):
             for review in reviews_data:
                 st.markdown(f"**•** {review}")
@@ -361,17 +362,17 @@ if analysis_trigger:
         
         st.divider()
         
-        # --- FIXED SMART FORMATTER (Big Headers + Bullets) ---
+        # --- SMART FORMATTER FOR ANALYSIS ---
         analysis_data = result.get("detailed_technical_analysis", {})
         
         if isinstance(analysis_data, dict):
             for header, bullets in analysis_data.items():
-                st.markdown(f"### {header}") # Big Header
+                st.markdown(f"### {header}") 
                 if isinstance(bullets, list):
                     for bullet in bullets:
-                        st.markdown(f"- {bullet}") # Bullet points
+                        st.markdown(f"- {bullet}")
                 else:
                     st.markdown(str(bullets))
-                st.markdown("") # Spacing
+                st.markdown("") 
         else:
             st.markdown(str(analysis_data))
