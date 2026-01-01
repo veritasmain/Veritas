@@ -50,7 +50,6 @@ with st.sidebar:
         for index, item in enumerate(reversed(st.session_state.history)):
             col1, col2 = st.columns([3, 1])
             with col1:
-                # Force truncate long names for the button label
                 display_name = item['source']
                 if len(display_name) > 22:
                     display_name = display_name[:20] + "..."
@@ -63,7 +62,6 @@ with st.sidebar:
                     args=(item,)
                 )
             with col2:
-                # Default baseline is now 40 (Orange/Red)
                 raw = item.get('score', 40)
                 score = int(raw)
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
@@ -104,7 +102,6 @@ def clean_and_parse_json(response_text):
 
 def extract_score_safely(result_dict):
     raw = result_dict.get("score")
-    # DEFAULT IS NOW 40. Unknown = Risky.
     score = 40 
     
     if isinstance(raw, (int, float)):
@@ -129,9 +126,6 @@ def get_standardized_verdict(score):
         return "🌟 EXCELLENT: TOP TIER AUTHENTIC"
 
 def extract_name_from_url(url):
-    """
-    Extracts a clean short name from the URL slug.
-    """
     try:
         path = urlparse(url).path
         if path.endswith('.html'): path = path[:-5]
@@ -140,7 +134,6 @@ def extract_name_from_url(url):
         if segments:
             slug = max(segments, key=len)
             clean_name = slug.replace('-', ' ').replace('_', ' ').title()
-            # If slug is too long, truncate it
             if len(clean_name) > 30:
                 clean_name = clean_name[:30] + "..."
             if len(clean_name) > 3:
@@ -148,7 +141,6 @@ def extract_name_from_url(url):
     except:
         pass
     
-    # Fallback to ID
     ali_match = re.search(r'/item/(\d+)\.html', url)
     if ali_match: return f"AliExpress Item {ali_match.group(1)}"
     
@@ -158,16 +150,10 @@ def extract_name_from_url(url):
     return "Unidentified Item"
 
 def sanitize_product_name(name):
-    """
-    Guillotine logic: If name is garbage or too long, kill it.
-    """
     if not name: return "Unidentified Item"
+    if len(name) > 40: return "Unidentified Item"
     
-    # If the name is a sentence (over 40 chars), it's garbage.
-    if len(name) > 40: 
-        return "Unidentified Item"
-    
-    bad_phrases = ["unable to", "cannot determine", "based on url", "placeholder", "unknown", "generic", "item"]
+    bad_phrases = ["unable to", "cannot determine", "based on url", "placeholder", "unknown", "generic", "item", "product"]
     if any(p in name.lower() for p in bad_phrases):
         return "Unidentified Item"
         
@@ -266,12 +252,27 @@ if analysis_trigger:
                         except:
                             pass
                 
-                # CONSISTENCY LOCKDOWN RULES
+                # DICTATOR MODE PROMPT
                 consistency_rules = """
-                CONSISTENCY LOCKDOWN:
-                1. **EQUALIZER:** Treat Amazon and AliExpress items IDENTICALLY. Do not give points for the "Amazon" platform.
-                2. **CATEGORY CAP:** If product is a Drone, Projector, or Smartwatch AND Unbranded/Generic -> MAX SCORE = 45.
-                3. **PRICE CHECK:** If features are "Pro/4K/GPS" but price is < $50 -> MAX SCORE = 45.
+                MANDATORY SCORING ALGORITHM (DO NOT DEVIATE):
+
+                RULE 1: PLATFORM BLINDNESS
+                - Treat this product as if it is sold on AliExpress, even if the link is Amazon/Walmart.
+                - Ignore all "Star Ratings" provided in the text. They are likely fake.
+                
+                RULE 2: THE CHEAP TECH CEILING (STRICT)
+                - IF the product is a (Drone OR Projector OR Smartwatch OR Earbuds) AND Price is < $60:
+                - THEN the Score MUST BE between 10 and 45.
+                - IT IS FORBIDDEN to score > 45 for cheap generic electronics.
+
+                RULE 3: THE IMPOSSIBLE SPEC PENALTY
+                - IF product claims "8K", "16TB", "Pro GPS" but is cheap -> SCORE = 10 (SCAM).
+                
+                SCORE GUIDE:
+                - 10-25: Scam / Fake Specs.
+                - 30-45: Cheap / Drop-shipped / Misleading.
+                - 50-65: Verified functional but mediocre.
+                - 70-100: Top Tier (Sony/DJI/Apple quality only).
                 """
 
                 # 1. Primary Analysis
@@ -280,12 +281,12 @@ if analysis_trigger:
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
 
                     prompt = f"""
-                    You are Veritas. Analyze this product.
+                    You are Veritas, a Forensic Analyst.
                     {consistency_rules}
                     
                     TASK:
                     1. Extract Exact "product_name" (Max 5 words).
-                    2. Analyze Reviews.
+                    2. Apply the Scoring Algorithm strictly.
                     3. JSON Output (Title Case Keys).
 
                     Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
@@ -306,7 +307,7 @@ if analysis_trigger:
                 # 2. Backup Deep Search
                 if scrape_error or not result:
                     search_query_1 = f"{fallback_name} reviews"
-                    search_query_2 = f"{fallback_name} cheap vs real"
+                    search_query_2 = f"{fallback_name} fake vs real"
                     
                     prompt = f"""
                     I cannot access page directly. 
