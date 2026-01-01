@@ -1,4 +1,4 @@
- import streamlit as st
+import streamlit as st
 from google import genai
 from firecrawl import Firecrawl
 from PIL import Image
@@ -407,3 +407,4 @@ if analysis_trigger:
                 st.markdown("") 
         else:
             st.markdown(str(analysis_data))
+
