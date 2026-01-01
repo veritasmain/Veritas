@@ -96,41 +96,25 @@ def clean_and_parse_json(response_text):
             return {}
 
 def extract_score_safely(result_dict):
-    """
-    Extracts score. Returns 0 if no score found (signals failure).
-    """
     raw = result_dict.get("score")
     score = 0 
-    
     if isinstance(raw, (int, float)):
         score = int(raw)
     elif isinstance(raw, str):
         nums = re.findall(r'\d+', raw)
         if nums:
             score = int(nums[0])
-            
-    # Round to nearest 5
-    score = 5 * round(score / 5)
-    return max(0, min(100, score))
+    return max(0, min(100, 5 * round(score / 5)))
 
 def extract_id_from_url(url):
-    """
-    Robust extraction of ID from URL to ensure we never say "Unknown Product".
-    """
-    # AliExpress Pattern
     ali_match = re.search(r'/item/(\d+)\.html', url)
-    if ali_match: 
-        return f"AliExpress Item {ali_match.group(1)}"
+    if ali_match: return f"AliExpress Item {ali_match.group(1)}"
     
-    # Amazon Pattern (ASIN)
     amz_match = re.search(r'/(dp|gp/product)/([A-Z0-9]{10})', url)
-    if amz_match: 
-        return f"Amazon Item {amz_match.group(2)}"
+    if amz_match: return f"Amazon Item {amz_match.group(2)}"
     
-    # Temu Pattern (goods_id)
     temu_match = re.search(r'goods_id=(\d+)', url)
-    if temu_match:
-        return f"Temu Item {temu_match.group(1)}"
+    if temu_match: return f"Temu Item {temu_match.group(1)}"
 
     return ""
 
@@ -186,73 +170,67 @@ if analysis_trigger:
     score = 0
     product_image_url = None
     
-    # CASE 1: PLAYBACK (History)
     if analysis_trigger == "playback":
         data = st.session_state.playback_data
         result = data['result']
         score = extract_score_safely(result)
         st.success(f"📂 Loaded from History: {data['source']}")
 
-    # CASE 2: NEW ANALYSIS
     elif gemini_key and firecrawl_key:
-        status_box = st.status("🕵️‍♂️ Veritas is investigating...", expanded=True)
+        # --- SILENT MODE: Just "Verifying..." ---
+        status_box = st.status("Verifying...", expanded=False)
+        
         try:
             client = genai.Client(api_key=gemini_key)
 
             # === PATH A: LINK ANALYSIS ===
             if analysis_trigger == "link" and target_url:
                 
-                # 1. Pre-calculate fallback name (Crucial Step)
                 fallback_name = extract_id_from_url(target_url)
                 
+                # Smart Bypass Check
+                is_hostile = "aliexpress" in target_url.lower() or "temu" in target_url.lower()
+                
                 scraped_data = None
-                scrape_error = True # Assume error until proven success
+                scrape_error = True 
                 content = ""
                 
-                # --- PITBULL RETRY LOOP (5 Attempts) ---
-                MAX_RETRIES = 5
-                for attempt in range(MAX_RETRIES):
-                    status_box.write(f"🌐 Scouting website (Attempt {attempt+1}/{MAX_RETRIES})...")
-                    
-                    try:
-                        scraped_data = scrape_website(target_url, firecrawl_key)
-                        
-                        if scraped_data:
-                            content = getattr(scraped_data, 'markdown', '')
-                            # Detailed Trap Detection
-                            content_str = str(content).lower()
-                            is_trap = len(str(content)) < 600 or \
-                                      "captcha" in content_str or \
-                                      "robot check" in content_str or \
-                                      "login" in content_str or \
-                                      "access denied" in content_str or \
-                                      "verify you are human" in content_str
-                            
-                            if not is_trap:
-                                scrape_error = False
-                                status_box.write("🔓 Access Granted! Analyzing data...")
-                                break # Success! Stop retrying.
-                            else:
-                                status_box.write(f"⚠️ Anti-bot hit. Retrying...")
-                                time.sleep(1.5) # Slight pause
-                    except:
-                        pass
+                if not is_hostile:
+                    # Silent Retry Loop
+                    MAX_RETRIES = 5
+                    for attempt in range(MAX_RETRIES):
+                        try:
+                            scraped_data = scrape_website(target_url, firecrawl_key)
+                            if scraped_data:
+                                content = getattr(scraped_data, 'markdown', '')
+                                content_str = str(content).lower()
+                                is_trap = len(str(content)) < 600 or \
+                                          any(x in content_str for x in ["captcha", "robot check", "login", "access denied", "verify you are human"])
+                                
+                                if not is_trap:
+                                    scrape_error = False
+                                    break 
+                                else:
+                                    time.sleep(1.5)
+                        except:
+                            pass
                 
-                # 3. Attempt Primary Analysis (Only if Scrape Succeeded)
+                # Primary Analysis
                 if not scrape_error and scraped_data:
-                    status_box.write("🧠 Reading content...")
                     meta = getattr(scraped_data, 'metadata', {})
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
 
                     prompt = f"""
                     You are Veritas. Analyze this product.
                     
-                    STRICT SCORING (MULTIPLES OF 5):
-                    - 0-25: SCAM/FAKE/DANGEROUS.
-                    - 30-45: TRASH/BROKEN/LOW QUALITY.
-                    - 50-75: AVERAGE/DECENT.
-                    - 80-100: EXCELLENT (Verified Authentic).
-                    **Deduct max 10 points for platform risk (Temu/AliExpress).**
+                    STRICT SCORING PROTOCOL:
+                    - 0-25: DANGEROUS / SCAM / FAKE ITEM.
+                    - 30-45: MISLEADING / LOW QUALITY. (If specs are fake/misleading e.g. "Fake 4K", MAX SCORE IS 45).
+                    - 50-65: MEDIOCRE / YOU GET WHAT YOU PAY FOR.
+                    - 70-85: GOOD / RELIABLE.
+                    - 90-100: EXCELLENT.
+                    
+                    **LIAR'S PENALTY:** If the product description makes false claims, the score CANNOT exceed 25.
 
                     TASK 1: EXACT NAMING
                     - "product_name": Use exact Brand & Model. If blocked/unknown, return "Generic".
@@ -264,7 +242,6 @@ if analysis_trigger:
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:25000]}
                     """
-                    # Temperature 0 forces consistency
                     response = client.models.generate_content(
                         model='gemini-2.0-flash', 
                         contents=prompt,
@@ -274,28 +251,25 @@ if analysis_trigger:
                     temp_name = temp_result.get("product_name", "Unknown")
                     temp_score = extract_score_safely(temp_result)
 
-                    # 4. ZOMBIE CHECK: Reject lazy/blocked results
-                    # If score is exactly 50 (neutral) AND name is Generic, scrape failed silently.
                     if temp_name in ["Unknown", "Generic", "Product Page"] or temp_score == 50:
                          scrape_error = True
-                         status_box.write("⚠️ Data insufficient. Forcing Backup Search...")
                     else:
                         result = temp_result
 
-                # 5. Backup Search (If ALL retries failed OR Zombie Check failed)
+                # Backup Search (Silent Switch)
                 if scrape_error or not result:
-                    status_box.write("🛡️ Direct access failed. Switching to ID Investigation...")
-                    
                     prompt = f"""
-                    I cannot access page directly (Scraper Blocked). URL: {target_url}
+                    I cannot access page directly (Scraper Blocked/Bypassed). URL: {target_url}
                     1. EXTRACT ID/ASIN from URL.
                     2. SEARCH Google for ID + "Review" + "Reddit".
                     
-                    STRICT SCORING (MULTIPLES OF 5):
-                    - 0-25: SCAM.
-                    - 30-45: TRASH/BROKEN.
-                    - 50-75: AVERAGE.
-                    - 80-85: EXCELLENT (CAPPED AT 85).
+                    STRICT SCORING PROTOCOL:
+                    - 0-25: SCAM / FAKE SPECS.
+                    - 30-45: MISLEADING / TRASH. (If product is "Misleading", MAX SCORE IS 45).
+                    - 50-65: MEDIOCRE.
+                    - 70-85: GOOD.
+                    
+                    **LIAR'S PENALTY:** If reviews indicate misleading specs, SCORE MUST BE UNDER 45.
                     
                     OUTPUT REQUIREMENTS:
                     - "product_name": EXACT BRAND & MODEL. Do NOT use "Unknown". Use the Google snippet title.
@@ -314,11 +288,16 @@ if analysis_trigger:
 
             # === PATH B: IMAGE ANALYSIS ===
             elif analysis_trigger == "image" and uploaded_image:
-                status_box.write("👁️ Analyzing visual evidence...")
                 prompt = """
                 YOU ARE A FORENSIC ANALYST.
                 STEP 1: IDENTIFY & SEARCH Google for item in image.
-                STEP 2: SCORE (0-100). Max 10pt deduction for platform risk.
+                
+                STRICT SCORING PROTOCOL:
+                - 0-25: SCAM / FAKE SPECS.
+                - 30-45: MISLEADING / LOW QUALITY. (If item is misleading, MAX SCORE IS 45).
+                - 50-65: MEDIOCRE.
+                - 70-100: GOOD.
+
                 STEP 3: Return JSON with "product_name", "score", "verdict", "reviews_summary", "detailed_technical_analysis".
                 """
                 response = client.models.generate_content(
@@ -331,9 +310,7 @@ if analysis_trigger:
             # PARSE & SAVE
             score = extract_score_safely(result)
             
-            # Final Name Cleanup (Crucial for History consistency)
             final_name = result.get("product_name", "Unidentified Item")
-            # If AI still failed to name it, use the ID we extracted earlier
             if final_name in ["Unknown", "N/A", "Unidentified Item", "Generic"] and 'fallback_name' in locals() and fallback_name:
                  final_name = fallback_name
 
