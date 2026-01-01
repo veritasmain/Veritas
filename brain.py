@@ -208,12 +208,11 @@ if analysis_trigger:
                     - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
 
                     TASK 2: MARKET COMPARISON (CRITICAL)
-                    - "detailed_technical_analysis": Use MARKDOWN HEADERS (###) and BULLET POINTS.
-                    - Compare the link provided vs. other sites. (e.g. "Temu price $15 vs Amazon price $45 for identical item").
+                    - "detailed_technical_analysis": Compare the link provided vs. other sites. (e.g. "Temu price $15 vs Amazon price $45 for identical item").
 
                     TASK 3: REVIEW SOURCING
-                    - "reviews_summary": Detailed 2-3 sentence summaries per source. Cite sources (Amazon, Reddit, etc.).
-                    - "key_complaints": "Feature: Specific failure".
+                    - "reviews_summary": DO NOT BE VAGUE. Quote specific metrics if possible (e.g. "Battery lasted 12 mins"). Cite sources (Amazon, Reddit, etc.).
+                    - "key_complaints": "Feature: Specific failure" (e.g. "Battery: Dies in 20 mins").
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:20000]}
@@ -231,8 +230,8 @@ if analysis_trigger:
                     
                     OUTPUT REQUIREMENTS:
                     - "verdict": SHORT & PUNCHY (Max 15 words).
-                    - "reviews_summary": Detailed 2-3 sentence summaries per source. Cite sources.
-                    - "detailed_technical_analysis": Use MARKDOWN HEADERS and BULLET POINTS.
+                    - "reviews_summary": Detailed summaries per source. Cite sources.
+                    - "detailed_technical_analysis": COMPARE specs across sites.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -262,13 +261,12 @@ if analysis_trigger:
                    - SHORT and PUNCHY (Max 15 words).
 
                 STEP 4: CROSS-REFERENCE ANALYSIS (CRITICAL)
-                   - In "detailed_technical_analysis": Use MARKDOWN HEADERS (###). Under each header, use BULLET POINTS ONLY.
-                   - EXPLICITLY COMPARE the screenshot to the search results.
+                   - "detailed_technical_analysis": EXPLICITLY COMPARE the screenshot to the search results.
                    - Example: "Screenshot claims '4K', but verified Amazon listing for this exact mold (Model X) confirms it is only 720p."
                    - Example: "Screenshot price is $50, but identical item found on AliExpress for $12."
 
                 STEP 5: REVIEWS
-                   - "reviews_summary": Detailed 2-3 sentence summaries per source (e.g. "Amazon Reviews: ...", "Reddit Threads: ...").
+                   - "reviews_summary": Detailed analysis. Do not summarize broadly. Quote specific issues (e.g. "Users report the drone drifts left constantly"). Cite sources.
                    - "key_complaints": "Feature: Specific technical failure".
 
                 Return JSON keys: 
@@ -318,7 +316,8 @@ if analysis_trigger:
     
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
-        st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
+        # FIX: Added /100 to the score display
+        st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}<span style='font-size: 40px; color: grey;'>/100</span></h1>", unsafe_allow_html=True)
         st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Done')}</h3>", unsafe_allow_html=True)
         
         with st.expander("ℹ️ Why is this score different on other sites?"):
@@ -338,9 +337,7 @@ if analysis_trigger:
             st.error("🚨 Critical Failure Points:")
             for c in result.get("key_complaints", []): st.markdown(f"**-** {c}")
         
-        # --- FIXED CRASH & FORMATTING ---
         summary_text = result.get("reviews_summary", "No reviews found.")
-        
         if isinstance(summary_text, list):
             summary_text = "\n\n".join(summary_text) 
         elif not isinstance(summary_text, str):
@@ -355,4 +352,23 @@ if analysis_trigger:
         
         st.divider()
         st.subheader("Technical Deep Dive")
-        st.markdown(result.get("detailed_technical_analysis", "N/A"))
+        
+        # --- FIX: SMART FORMATTER FOR ANALYSIS ---
+        analysis_data = result.get("detailed_technical_analysis", "N/A")
+        
+        # Check if it's a Dictionary (The weird output you saw)
+        if isinstance(analysis_data, dict):
+            for header, content in analysis_data.items():
+                st.markdown(f"### {header}")
+                if isinstance(content, list):
+                    for item in content:
+                        st.markdown(f"- {item}")
+                else:
+                    st.markdown(content)
+        # Check if it's a List
+        elif isinstance(analysis_data, list):
+            for item in analysis_data:
+                st.markdown(f"- {item}")
+        # Default (String)
+        else:
+            st.markdown(str(analysis_data))
