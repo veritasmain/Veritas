@@ -21,8 +21,6 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "playback_data" not in st.session_state:
     st.session_state.playback_data = None
-
-# Uploader ID for Key Rotation
 if "uploader_id" not in st.session_state:
     st.session_state.uploader_id = 0
 
@@ -188,9 +186,13 @@ if analysis_trigger:
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
 
                     prompt = f"""
-                    Analyze this product.
-                    RUBRIC (0-100): 90+=Verified Brand, 0-59=Dropship/Scam.
-                    TASK: Check specs for "impossible" claims (e.g. 100TB SSD for $10).
+                    Analyze this product text.
+                    
+                    FORMAT REQUIREMENTS:
+                    - "key_complaints": List of strings. Format as "Feature: Specific details" (e.g. "Battery: Dies in 20 mins, claims 4 hours").
+                    - "reviews_summary": A single string using BULLET POINTS (•) to separate Pros, Cons, and Verdict.
+                    - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullet points to organize by Build Quality, Specs Reality, and Value.
+
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:20000]}
                     """
@@ -199,9 +201,14 @@ if analysis_trigger:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     prompt = f"""
                     I cannot access page. URL: {target_url}
-                    1. EXTRACT ID (ASIN/GoodsID) from URL.
-                    2. SEARCH Google for ID + "Reddit" + "Review".
-                    3. SCORE LOW (<40) if only found on scam sites.
+                    1. EXTRACT ID (ASIN/GoodsID).
+                    2. SEARCH Google for ID + "Review".
+                    
+                    FORMAT REQUIREMENTS:
+                    - "key_complaints": List of strings. "Feature: Specific details".
+                    - "reviews_summary": String with BULLET POINTS (•) for Pros/Cons/Verdict.
+                    - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullets.
+
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
                     response = client.models.generate_content(
@@ -216,23 +223,14 @@ if analysis_trigger:
                 prompt = """
                 YOU ARE A FORENSIC ANALYST.
                 
-                1. IDENTIFICATION (MANDATORY): 
-                   - Read EVERY text label (Model, Brand, Specs).
-                   - If no text, describe visually.
-                   - 'product_name' MUST NOT be 'Unknown'. Make a specific guess.
+                1. IDENTIFY & SEARCH: Read text on device, search Google for real reviews.
+                
+                2. SCORING (0-100): Start at 80. Deduct for dropshipping matches or fake specs.
 
-                2. SEARCH ACTION: 
-                   - Search Google for the text/name you found.
-                   - Check for "Same product cheaper" on AliExpress.
-
-                3. SCORING RUBRIC (0-100):
-                   - Start at 80.
-                   - Deduct 30 if exact image is found on AliExpress/Alibaba.
-                   - Deduct 20 if specs (4K, 1080p) are proven false by reviews.
-                   - Deduct 20 for "Toy Grade" quality.
-
-                4. REVIEWS:
-                   - Quote specific complaints (e.g. "Battery lasts 10 mins").
+                3. OUTPUT FORMATTING (CRITICAL):
+                   - "key_complaints": List of strings. Format: "Feature: Specific failure" (e.g. "Focus: Ring is loose and blurry").
+                   - "reviews_summary": A single string using BULLET POINTS (•) to summarize the consensus.
+                   - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullets to organize the deep dive.
 
                 Return JSON keys: 
                 "product_name", "score", "verdict", "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
@@ -284,15 +282,11 @@ if analysis_trigger:
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
         st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Done')}</h3>", unsafe_allow_html=True)
         
-        # --- NEW TRANSPARENCY NOTE ---
         with st.expander("ℹ️ Why is this score different on other sites?"):
             st.info("""
             **Veritas scores the Transaction Safety, not just the Item.**
-            
-            * **Amazon/Walmart (+5-10 Points):** Safer returns, warranty, and faster shipping reduce your risk.
-            * **Temu/AliExpress (-5-10 Points):** Higher risk of shipping damage, difficult returns, or 'bait & switch' tactics penalize the score.
-            
-            The product might be the same, but the **risk of losing your money** is different.
+            * **Amazon/Walmart (+5-10 pts):** Safer returns, warranty, faster shipping.
+            * **Temu/AliExpress (-5-10 pts):** Higher risk of shipping damage or returns.
             """)
 
         if score <= 45: st.error("⛔ DO NOT BUY. Poor quality/scam.")
@@ -302,12 +296,17 @@ if analysis_trigger:
     with t2:
         st.subheader("Consensus")
         if result.get("key_complaints"):
-            st.error("🚨 Complaints:")
-            for c in result.get("key_complaints", []): st.markdown(f"**•** {c}")
+            st.error("🚨 Key Issues:")
+            for c in result.get("key_complaints", []): st.markdown(f"**-** {c}")
+        
+        # New Formatting for the Blue Box
         st.info(result.get("reviews_summary", "No reviews found."))
 
     with t3:
-        st.subheader("Details")
+        st.subheader("Red Flags")
         for flag in result.get("red_flags", []): st.markdown(f"**•** {flag}")
-        with st.expander("🔍 Technical Deep Dive"):
-            st.markdown(result.get("detailed_technical_analysis", "N/A"))
+        
+        st.divider()
+        st.subheader("Technical Deep Dive")
+        # Markdown rendering for organized analysis
+        st.markdown(result.get("detailed_technical_analysis", "N/A"))
