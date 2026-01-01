@@ -99,7 +99,7 @@ def extract_score_safely(result_dict):
     Extracts score and rounds it to the nearest multiple of 5.
     """
     raw = result_dict.get("score")
-    score = 50 # Default neutral
+    score = 50 # Default
     
     if isinstance(raw, (int, float)):
         score = int(raw)
@@ -110,8 +110,6 @@ def extract_score_safely(result_dict):
             
     # Round to nearest 5
     score = 5 * round(score / 5)
-    
-    # Ensure bounds 0-100
     return max(0, min(100, score))
 
 # --- SCRAPING ---
@@ -201,21 +199,21 @@ if analysis_trigger:
                     You are Veritas. Analyze this product.
                     
                     SCORING RULES (MULTIPLES OF 5 ONLY):
-                    - 0-25: TOTAL SCAM (Item doesn't match description, AI hallucination, dangerous).
-                    - 30-50: POOR VALUE (Generic dropshipping junk, fake specs, but a real physical item).
-                    - 55-75: DECENT (Functional, honest pricing, average quality).
-                    - 80-100: EXCELLENT (Verified Brand, High value).
+                    - 0-25: TOTAL SCAM.
+                    - 30-50: POOR VALUE (Generic dropshipping junk).
+                    - 55-75: DECENT.
+                    - 80-100: EXCELLENT.
 
                     TASK 1: SHORT VERDICT
                     - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
 
-                    TASK 2: DETAILED ANALYSIS
+                    TASK 2: MARKET COMPARISON (CRITICAL)
                     - "detailed_technical_analysis": Use MARKDOWN HEADERS (###) and BULLET POINTS.
-                    - Compare the user's link vs. other sites explicitly.
+                    - Compare the link provided vs. other sites. (e.g. "Temu price $15 vs Amazon price $45 for identical item").
 
                     TASK 3: REVIEW SOURCING
                     - "reviews_summary": Detailed 2-3 sentence summaries per source. Cite sources (Amazon, Reddit, etc.).
-                    - "key_complaints": "Feature: Specific failure" (e.g. "Battery: Dies in 20 mins").
+                    - "key_complaints": "Feature: Specific failure".
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:20000]}
@@ -225,10 +223,10 @@ if analysis_trigger:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     prompt = f"""
                     I cannot access page. URL: {target_url}
-                    1. EXTRACT ID. 2. SEARCH Google for ID + "Review" + "Reddit".
+                    1. EXTRACT ID. 2. SEARCH Google for ID + "Review" + "Reddit" + "AliExpress".
                     
                     SCORING RULES (MULTIPLES OF 5 ONLY):
-                    - 0-25: TOTAL SCAM / PHISHING.
+                    - 0-25: TOTAL SCAM.
                     - 30-50: DROPSHIPPING / LOW QUALITY.
                     
                     OUTPUT REQUIREMENTS:
@@ -250,21 +248,27 @@ if analysis_trigger:
                 prompt = """
                 YOU ARE A FORENSIC ANALYST.
                 
-                1. IDENTIFY: Read text. Search Google for "product name reviews".
+                STEP 1: IDENTIFY & SEARCH
+                - Extract text from the image (Brand, Model, Specs).
+                - SEARCH Google for this item on: Amazon, AliExpress, and Reddit.
+                - IGNORE the screenshot's claims until verified against these external searches.
                 
-                2. SCORING RULES (MULTIPLES OF 5 ONLY):
-                   - 0-25: TOTAL SCAM (Image shows 4K camera, real item is a plastic toy; or nothing arrives).
-                   - 30-55: POOR VALUE (Real item, but overpriced or lower quality than implied. e.g. Upscaled 1080p).
-                   - 60-100: LEGIT (Product matches description).
+                STEP 2: SCORING (MULTIPLES OF 5 ONLY):
+                   - 0-25: SCAM/FAKE (Image matches a known scam product, or price is impossible).
+                   - 30-55: POOR VALUE (Found identical item on AliExpress for 50% less).
+                   - 60-100: LEGIT (Product matches reputable listings).
 
-                3. VERDICT: SHORT and PUNCHY (Max 15 words).
+                STEP 3: VERDICT
+                   - SHORT and PUNCHY (Max 15 words).
 
-                4. CROSS-REFERENCE ANALYSIS:
+                STEP 4: CROSS-REFERENCE ANALYSIS (CRITICAL)
                    - In "detailed_technical_analysis": Use MARKDOWN HEADERS (###). Under each header, use BULLET POINTS ONLY.
-                   - Compare screenshot claims vs external reality.
+                   - EXPLICITLY COMPARE the screenshot to the search results.
+                   - Example: "Screenshot claims '4K', but verified Amazon listing for this exact mold (Model X) confirms it is only 720p."
+                   - Example: "Screenshot price is $50, but identical item found on AliExpress for $12."
 
-                5. REVIEWS:
-                   - "reviews_summary": Detailed 2-3 sentence summaries per source.
+                STEP 5: REVIEWS
+                   - "reviews_summary": Detailed 2-3 sentence summaries per source (e.g. "Amazon Reviews: ...", "Reddit Threads: ...").
                    - "key_complaints": "Feature: Specific technical failure".
 
                 Return JSON keys: 
@@ -315,7 +319,6 @@ if analysis_trigger:
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
-        # Display the SHORT verdict here
         st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Done')}</h3>", unsafe_allow_html=True)
         
         with st.expander("ℹ️ Why is this score different on other sites?"):
@@ -335,11 +338,11 @@ if analysis_trigger:
             st.error("🚨 Critical Failure Points:")
             for c in result.get("key_complaints", []): st.markdown(f"**-** {c}")
         
-        # --- FIXED CRASH: Ensure summary_text is a string before replacing ---
+        # --- FIXED CRASH & FORMATTING ---
         summary_text = result.get("reviews_summary", "No reviews found.")
         
         if isinstance(summary_text, list):
-            summary_text = "\n\n".join(summary_text) # Join with double newline for paragraphs
+            summary_text = "\n\n".join(summary_text) 
         elif not isinstance(summary_text, str):
             summary_text = str(summary_text)
             
