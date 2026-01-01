@@ -186,6 +186,7 @@ if analysis_trigger:
             if analysis_trigger == "link" and target_url:
                 
                 fallback_name = extract_id_from_url(target_url)
+                
                 is_hostile = "aliexpress" in target_url.lower() or "temu" in target_url.lower()
                 
                 scraped_data = None
@@ -246,33 +247,38 @@ if analysis_trigger:
                     temp_result = clean_and_parse_json(response.text)
                     temp_name = temp_result.get("product_name", "Unknown")
                     temp_score = extract_score_safely(temp_result)
+                    temp_complaints = str(temp_result.get("key_complaints", ""))
 
-                    if temp_name in ["Unknown", "Generic", "Product Page"] or temp_score == 50:
+                    # "Zombie" Check: If result is lazy/empty, force backup
+                    is_lazy = "cannot determine" in temp_complaints.lower() or "no reviews" in temp_complaints.lower()
+                    if temp_name in ["Unknown", "Generic", "Product Page"] or temp_score == 50 or is_lazy:
                          scrape_error = True
                     else:
                         result = temp_result
 
-                # Backup Deep Search
+                # Backup Deep Search (Forced Execution)
                 if scrape_error or not result:
-                    search_query_1 = f"{fallback_name} reviews reddit"
-                    search_query_2 = f"{fallback_name} specs vs reality"
+                    # Construct queries that look for the PRODUCT, not just the URL
+                    search_query_1 = f"{fallback_name} reviews reddit problems"
+                    search_query_2 = f"{fallback_name} scam warning"
                     
                     prompt = f"""
-                    I cannot access page directly. 
-                    Target: {fallback_name} (from URL: {target_url})
+                    I cannot access the page directly. 
+                    Target ID: {fallback_name} (from URL: {target_url})
                     
-                    MANDATORY: SEARCH for "{search_query_1}" AND "{search_query_2}".
+                    MANDATORY INSTRUCTION:
+                    1. USE 'google_search' TOOL to find the REAL PRODUCT NAME associated with this ID.
+                    2. Then SEARCH AGAIN for "{search_query_1}" using that Name.
+                    3. If no specific reviews exist, SEARCH for "Common problems with cheap [Product Category]".
+
+                    OUTPUT:
+                    - "product_name": The Real Brand/Model you found.
+                    - "key_complaints": LIST specific complaints found on Reddit/Forums. If none, list "Potential Failures" based on the product type.
+                    - "verdict": Short & Punchy.
                     
                     STRICT SCORING:
-                    - 0-25: SCAM / FAKE.
-                    - 30-45: MISLEADING / TRASH.
-                    - 50-65: MEDIOCRE.
-                    - 70-85: GOOD.
-                    
-                    OUTPUT:
-                    - "product_name": EXACT BRAND & MODEL.
-                    - "verdict": SHORT & PUNCHY.
-                    - "detailed_technical_analysis": JSON OBJECT (Title Case Keys).
+                    - If you can't find info -> Score 40 (High Risk/Unknown).
+                    - If found "scam" -> Score 10.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -289,7 +295,7 @@ if analysis_trigger:
                 YOU ARE A FORENSIC ANALYST.
                 
                 STEP 1: READ TEXT & IDENTIFY PRODUCT from image.
-                STEP 2: SEARCH GOOGLE for the identified product.
+                STEP 2: SEARCH GOOGLE for the identified product to find reviews.
                 STEP 3: COMPARE Screenshot claims vs Real World data.
                 
                 STRICT SCORING:
@@ -369,14 +375,12 @@ if analysis_trigger:
     with t2:
         st.subheader("Consensus")
         
-        # --- FIXED: Handle Lists vs Strings for Complaints ---
+        # FIXED: List vs String Handler
         complaints_data = result.get("key_complaints")
         if complaints_data:
-            # If it's a list, loop through it.
             if isinstance(complaints_data, list):
                 for c in complaints_data:
                     st.markdown(f"**🚨** {c}")
-            # If it's a string, just print it once.
             elif isinstance(complaints_data, str):
                 st.markdown(f"**🚨** {complaints_data}")
         
@@ -393,7 +397,6 @@ if analysis_trigger:
 
     with t3:
         st.subheader("Red Flags")
-        # --- FIXED: Handle Lists vs Strings for Red Flags ---
         red_flags_data = result.get("red_flags", [])
         if isinstance(red_flags_data, list):
             for flag in red_flags_data:
@@ -402,7 +405,7 @@ if analysis_trigger:
              st.markdown(f"**•** {red_flags_data}")
         
         st.divider()
-        # Smart Formatter for Analysis Dictionary
+        # Smart Formatter (Title Case)
         analysis_data = result.get("detailed_technical_analysis", {})
         if isinstance(analysis_data, dict):
             for header, bullets in analysis_data.items():
