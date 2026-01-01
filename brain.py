@@ -61,7 +61,6 @@ with st.sidebar:
                 score = int(raw) if isinstance(raw, (int, float)) else 0
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
                 st.write(f"{color} {score}")
-            # Use the standardized verdict for the history caption too
             st.caption(f"{item.get('standardized_verdict', item['verdict'])}")
             st.divider()
     
@@ -108,7 +107,6 @@ def extract_score_safely(result_dict):
     return max(0, min(100, 5 * round(score / 5)))
 
 def get_standardized_verdict(score):
-    """Returns a pre-made, consistent verdict based on the score range."""
     if score <= 25:
         return "⛔ CRITICAL WARNING: SCAM / FAKE"
     elif score <= 45:
@@ -130,7 +128,7 @@ def extract_id_from_url(url):
     temu_match = re.search(r'goods_id=(\d+)', url)
     if temu_match: return f"Temu Item {temu_match.group(1)}"
 
-    return ""
+    return "Unidentified Link"
 
 # --- SCRAPING ---
 @st.cache_data(ttl="24h", show_spinner=False)
@@ -200,15 +198,15 @@ if analysis_trigger:
             if analysis_trigger == "link" and target_url:
                 
                 fallback_name = extract_id_from_url(target_url)
-                
                 is_hostile = "aliexpress" in target_url.lower() or "temu" in target_url.lower()
                 
                 scraped_data = None
                 scrape_error = True 
                 content = ""
                 
+                # Try direct scrape only if not hostile
                 if not is_hostile:
-                    MAX_RETRIES = 5
+                    MAX_RETRIES = 3
                     for attempt in range(MAX_RETRIES):
                         try:
                             scraped_data = scrape_website(target_url, firecrawl_key)
@@ -216,16 +214,17 @@ if analysis_trigger:
                                 content = getattr(scraped_data, 'markdown', '')
                                 content_str = str(content).lower()
                                 is_trap = len(str(content)) < 600 or \
-                                          any(x in content_str for x in ["captcha", "robot check", "login", "access denied", "verify you are human"])
+                                          any(x in content_str for x in ["captcha", "robot check", "login", "access denied"])
                                 
                                 if not is_trap:
                                     scrape_error = False
                                     break 
                                 else:
-                                    time.sleep(1.5)
+                                    time.sleep(1)
                         except:
                             pass
                 
+                # Primary Analysis (If Scrape Success)
                 if not scrape_error and scraped_data:
                     meta = getattr(scraped_data, 'metadata', {})
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
@@ -233,28 +232,22 @@ if analysis_trigger:
                     prompt = f"""
                     You are Veritas. Analyze this product.
                     
-                    CONSISTENCY PROTOCOL:
-                    - **Generic/Unbranded Electronics (e.g. cheap drones, projectors, smartwatches):** BASE SCORE = 40. Only go higher if verifiable reviews exist.
-                    - **Known Brands (Sony, Anker, etc):** BASE SCORE = 80.
+                    CONSISTENCY ANCHOR:
+                    - **Generic/Unbranded Electronics:** BASE SCORE = 40.
+                    - **PRICE REALITY CHECK:** If item claims "Pro/4K/High-End" features but price is < $50 -> MAX SCORE = 45.
                     
-                    STRICT SCORING TIERS:
-                    - 0-25: DANGEROUS / SCAM (Fake specs, dangerous items).
-                    - 30-45: MISLEADING / LOW QUALITY (Works but poor quality/fake claims).
-                    - 50-65: MEDIOCRE (Acceptable for the low price).
-                    - 70-85: GOOD (Reliable).
-                    - 90-100: EXCELLENT.
+                    STRICT SCORING:
+                    - 0-25: SCAM / FAKE.
+                    - 30-45: MISLEADING / LOW QUALITY.
+                    - 50-65: MEDIOCRE.
+                    - 70-85: GOOD.
                     
-                    TASK 1: EXACT NAMING
-                    - "product_name": Use exact Brand & Model.
+                    TASK:
+                    1. Extract Exact "product_name".
+                    2. Analyze Reviews/Complaints.
+                    3. JSON Output with Title Case keys.
 
-                    TASK 2: REVIEWS
-                    - "reviews_summary": LIST of strings.
-                    - "key_complaints": LIST of strings.
-
-                    TASK 3: TECHNICAL ANALYSIS
-                    - "detailed_technical_analysis": JSON OBJECT. Keys must be Human Readable. Values must be Lists of Strings.
-
-                    Return JSON: product_name, score, explanation_blurb, detailed_technical_analysis, key_complaints, reviews_summary.
+                    Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:25000]}
                     """
                     response = client.models.generate_content(
@@ -263,18 +256,17 @@ if analysis_trigger:
                         config={'temperature': 0.0}
                     )
                     temp_result = clean_and_parse_json(response.text)
-                    temp_name = temp_result.get("product_name", "Unknown")
-                    temp_score = extract_score_safely(temp_result)
-
-                    if temp_name in ["Unknown", "Generic", "Product Page"] or temp_score == 50:
+                    
+                    # Zombie Check
+                    if temp_result.get("product_name") in ["Unknown", "Generic"] or extract_score_safely(temp_result) == 50:
                          scrape_error = True
                     else:
                         result = temp_result
 
-                # Backup Deep Search
+                # Backup Deep Search (If Scrape Failed OR Hostile)
                 if scrape_error or not result:
                     search_query_1 = f"{fallback_name} reviews reddit problems"
-                    search_query_2 = f"{fallback_name} specs vs reality"
+                    search_query_2 = f"{fallback_name} vs real brands"
                     
                     prompt = f"""
                     I cannot access page directly. 
@@ -282,17 +274,15 @@ if analysis_trigger:
                     
                     MANDATORY: SEARCH for "{search_query_1}" AND "{search_query_2}".
                     
-                    CONSISTENCY SCORING:
+                    CONSISTENCY ANCHOR:
                     - **Generic/Cheap Electronics:** BASE SCORE = 40. 
-                    - If you can't find specific info -> Score 40 (High Risk/Unknown).
-                    - If found "scam" -> Score 10.
+                    - **PRICE REALITY CHECK:** If finding results for "Cheap Drone" or "Knockoff", MAX SCORE = 40.
                     
                     OUTPUT:
-                    - "product_name": EXACT BRAND & MODEL.
-                    - "explanation_blurb": 2 sentence summary of why it got this score.
+                    - "product_name": EXTRACT THE REAL COMMERCIAL NAME (e.g. 'Lenovo LP40', 'S116 Drone'). Do NOT use the ID.
                     - "detailed_technical_analysis": JSON OBJECT (Title Case Keys).
 
-                    Return JSON: product_name, score, explanation_blurb, detailed_technical_analysis, key_complaints, reviews_summary.
+                    Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
                     response = client.models.generate_content(
                         model='gemini-2.0-flash', 
@@ -310,16 +300,14 @@ if analysis_trigger:
                 STEP 2: SEARCH GOOGLE for the identified product.
                 STEP 3: COMPARE Screenshot claims vs Real World data.
                 
-                CONSISTENCY SCORING:
-                - **Generic/No-Name Electronics:** BASE SCORE = 40.
-                - **Known Brands:** BASE SCORE = 80.
-                - False Claims (Fake 4K, etc): Score < 30.
+                CONSISTENCY ANCHOR:
+                - **PRICE REALITY CHECK:** If image shows "Pro" features but it's a known budget item -> MAX SCORE = 45.
+                - **Generic/No-Name:** BASE SCORE = 40.
 
                 RETURN JSON:
                 {
                     "product_name": "Brand Model",
                     "score": 0-100,
-                    "explanation_blurb": "Short explanation...",
                     "reviews_summary": ["Point 1", "Point 2"],
                     "key_complaints": ["Complaint 1"],
                     "detailed_technical_analysis": {"Price Check": ["..."], "Spec Verify": ["..."]}
@@ -336,9 +324,16 @@ if analysis_trigger:
             score = extract_score_safely(result)
             standardized_verdict = get_standardized_verdict(score)
             
-            final_name = result.get("product_name", "Unidentified Item")
-            if final_name in ["Unknown", "N/A", "Unidentified Item", "Generic"] and 'fallback_name' in locals() and fallback_name:
+            # --- FINAL NAME LOGIC (Crucial Fix) ---
+            # 1. Start with what the AI found
+            ai_name = result.get("product_name", "Unknown")
+            
+            # 2. If AI failed (Unknown/Generic), fall back to the ID
+            if ai_name in ["Unknown", "N/A", "Unidentified Item", "Generic", "Product Page"] and 'fallback_name' in locals():
                  final_name = fallback_name
+            else:
+                 # 3. If AI found a name, USE IT. Do not revert to ID.
+                 final_name = ai_name
 
             st.session_state.history.append({
                 "source": final_name,
@@ -371,15 +366,8 @@ if analysis_trigger:
     
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
-        # Display the Score
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}<span style='font-size: 40px; color: grey;'>/100</span></h1>", unsafe_allow_html=True)
-        
-        # Display Standardized Verdict (Pre-made)
-        standardized_verdict = get_standardized_verdict(score)
         st.markdown(f"<h3 style='text-align: center;'>{standardized_verdict}</h3>", unsafe_allow_html=True)
-        
-        # Display AI Explanation
-        st.markdown(f"<p style='text-align: center; font-style: italic;'>{result.get('explanation_blurb', 'Analysis complete.')}</p>", unsafe_allow_html=True)
         
         with st.expander("ℹ️ Why is this score different on other sites?"):
             st.info("""
@@ -394,7 +382,6 @@ if analysis_trigger:
         
         st.divider()
         
-        # --- FIXED: Deep Dive Dropdown ---
         with st.expander("🔍 Click for Deep Dive Analysis"):
             analysis_data = result.get("detailed_technical_analysis", {})
             if isinstance(analysis_data, dict):
@@ -412,7 +399,6 @@ if analysis_trigger:
 
     with t2:
         st.subheader("Consensus")
-        
         complaints_data = result.get("key_complaints")
         if complaints_data:
             if isinstance(complaints_data, list):
