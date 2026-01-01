@@ -62,12 +62,14 @@ with st.sidebar:
                     args=(item,)
                 )
             with col2:
-                # Default baseline is 35 (High Risk)
                 raw = item.get('score', 35)
                 score = int(raw)
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
                 st.write(f"{color} {score}")
-            st.caption(f"{item.get('standardized_verdict', item['verdict'])}")
+            
+            # Safe caption access
+            caption_text = item.get('standardized_verdict', item.get('verdict', 'Analysis'))
+            st.caption(caption_text)
             st.divider()
     
     if st.button("Clear History"):
@@ -103,8 +105,7 @@ def clean_and_parse_json(response_text):
 
 def extract_score_safely(result_dict):
     raw = result_dict.get("score")
-    # STRICT DEFAULT: If we don't know, it's a 35 (Red Flag).
-    score = 35 
+    score = 35 # Default Risk Score
     
     if isinstance(raw, (int, float)):
         score = int(raw)
@@ -213,12 +214,16 @@ if analysis_trigger:
     score = 35 
     product_image_url = None
     
+    # CASE 1: PLAYBACK (Fix applied here)
     if analysis_trigger == "playback":
         data = st.session_state.playback_data
         result = data['result']
         score = extract_score_safely(result)
+        # --- FIX: Ensure verdict is calculated on playback ---
+        standardized_verdict = get_standardized_verdict(score) 
         st.success(f"📂 Loaded from History: {data['source']}")
 
+    # CASE 2: NEW ANALYSIS
     elif gemini_key and firecrawl_key:
         status_box = st.status("Verifying...", expanded=False)
         
@@ -363,7 +368,6 @@ if analysis_trigger:
             score = extract_score_safely(result)
             standardized_verdict = get_standardized_verdict(score)
             
-            # --- FINAL NAME CLEANUP ---
             ai_name = result.get("product_name", "Unknown")
             clean_name = sanitize_product_name(ai_name)
             
@@ -404,7 +408,9 @@ if analysis_trigger:
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}<span style='font-size: 40px; color: grey;'>/100</span></h1>", unsafe_allow_html=True)
-        st.markdown(f"<h3 style='text-align: center;'>{standardized_verdict}</h3>", unsafe_allow_html=True)
+        # Safe access for variable that might not be defined in old history
+        verdict_text = locals().get('standardized_verdict', result.get('verdict', 'Analysis Complete'))
+        st.markdown(f"<h3 style='text-align: center;'>{verdict_text}</h3>", unsafe_allow_html=True)
         
         with st.expander("ℹ️ Why is this score different on other sites?"):
             st.info("""
