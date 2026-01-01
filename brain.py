@@ -50,10 +50,10 @@ with st.sidebar:
         for index, item in enumerate(reversed(st.session_state.history)):
             col1, col2 = st.columns([3, 1])
             with col1:
-                # Truncate long names for the button label
+                # Force truncate long names for the button label
                 display_name = item['source']
-                if len(display_name) > 25:
-                    display_name = display_name[:25] + "..."
+                if len(display_name) > 22:
+                    display_name = display_name[:20] + "..."
                 
                 st.button(
                     display_name, 
@@ -63,7 +63,7 @@ with st.sidebar:
                     args=(item,)
                 )
             with col2:
-                # Scores are now standardized. 40 is the baseline for Generic/Unknown.
+                # Default baseline is now 40 (Orange/Red)
                 raw = item.get('score', 40)
                 score = int(raw)
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
@@ -104,8 +104,7 @@ def clean_and_parse_json(response_text):
 
 def extract_score_safely(result_dict):
     raw = result_dict.get("score")
-    # DEFAULT TO 40 (High Risk) if scoring fails. 
-    # This aligns "Unknown" items with "Generic" items.
+    # DEFAULT IS NOW 40. Unknown = Risky.
     score = 40 
     
     if isinstance(raw, (int, float)):
@@ -131,26 +130,25 @@ def get_standardized_verdict(score):
 
 def extract_name_from_url(url):
     """
-    Improved extraction: Tries to find readable words in the URL.
+    Extracts a clean short name from the URL slug.
     """
     try:
         path = urlparse(url).path
-        # Remove file extensions like .html
         if path.endswith('.html'): path = path[:-5]
         
         segments = [s for s in path.split('/') if s and not s.isdigit()]
         if segments:
-            # Find the longest segment, it's usually the title
             slug = max(segments, key=len)
-            # Replace dashes with spaces and Title Case it
             clean_name = slug.replace('-', ' ').replace('_', ' ').title()
-            # If it's too short, it's probably junk
+            # If slug is too long, truncate it
+            if len(clean_name) > 30:
+                clean_name = clean_name[:30] + "..."
             if len(clean_name) > 3:
                 return clean_name
     except:
         pass
     
-    # Fallback to ID extraction if words fail
+    # Fallback to ID
     ali_match = re.search(r'/item/(\d+)\.html', url)
     if ali_match: return f"AliExpress Item {ali_match.group(1)}"
     
@@ -161,11 +159,15 @@ def extract_name_from_url(url):
 
 def sanitize_product_name(name):
     """
-    Cleans up garbage names returned by the AI.
+    Guillotine logic: If name is garbage or too long, kill it.
     """
-    if not name or len(name) > 60: return "Unidentified Item"
+    if not name: return "Unidentified Item"
     
-    bad_phrases = ["unable to", "cannot determine", "based on url", "placeholder", "unknown", "generic"]
+    # If the name is a sentence (over 40 chars), it's garbage.
+    if len(name) > 40: 
+        return "Unidentified Item"
+    
+    bad_phrases = ["unable to", "cannot determine", "based on url", "placeholder", "unknown", "generic", "item"]
     if any(p in name.lower() for p in bad_phrases):
         return "Unidentified Item"
         
@@ -220,7 +222,7 @@ else:
 if analysis_trigger:
     gemini_key, firecrawl_key = get_api_keys()
     result = {}
-    score = 40 # Default baseline
+    score = 40 
     product_image_url = None
     
     if analysis_trigger == "playback":
@@ -238,16 +240,13 @@ if analysis_trigger:
             # === PATH A: LINK ANALYSIS ===
             if analysis_trigger == "link" and target_url:
                 
-                # Extract a readable fallback name immediately
                 fallback_name = extract_name_from_url(target_url)
-                
                 is_hostile = "aliexpress" in target_url.lower() or "temu" in target_url.lower()
                 
                 scraped_data = None
                 scrape_error = True 
                 content = ""
                 
-                # Only try scraping if not hostile
                 if not is_hostile:
                     MAX_RETRIES = 3
                     for attempt in range(MAX_RETRIES):
@@ -267,16 +266,15 @@ if analysis_trigger:
                         except:
                             pass
                 
-                # SHARED PROMPT LOGIC FOR CONSISTENCY
+                # LOCKDOWN RULES FOR CONSISTENCY
                 consistency_rules = """
-                CONSISTENCY RULES:
-                1. **Generic/Unbranded/Clone:** MAX SCORE = 40.
-                2. **Impossible Specs (Fake 4K, 16TB for $20):** MAX SCORE = 25.
-                3. **Known Verified Brand (Sony, Dell):** BASE SCORE = 80.
-                4. **Unknown/Not Found:** SCORE = 40 (Risk).
+                CONSISTENCY LOCKDOWN:
+                1. **CATEGORY CAP:** If product is a Drone, Projector, or Smartwatch AND Unbranded/Generic -> MAX SCORE = 45. (Regardless of how nice the page looks).
+                2. **PRICE CHECK:** If features are "Pro" but price is < $50 -> MAX SCORE = 45.
+                3. **Known Brand (Sony/DJI):** BASE SCORE = 80.
                 """
 
-                # 1. Primary Analysis (If Scrape Success)
+                # 1. Primary Analysis
                 if not scrape_error and scraped_data:
                     meta = getattr(scraped_data, 'metadata', {})
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
@@ -286,7 +284,7 @@ if analysis_trigger:
                     {consistency_rules}
                     
                     TASK:
-                    1. Extract Exact "product_name". If unknown, use "Generic Device".
+                    1. Extract Exact "product_name" (Max 5 words).
                     2. Analyze Reviews.
                     3. JSON Output (Title Case Keys).
 
@@ -305,10 +303,10 @@ if analysis_trigger:
                     else:
                         result = temp_result
 
-                # 2. Backup Deep Search (If Scrape Failed OR Hostile)
+                # 2. Backup Deep Search
                 if scrape_error or not result:
-                    search_query_1 = f"{fallback_name} reviews reddit problems"
-                    search_query_2 = f"{fallback_name} specs vs reality"
+                    search_query_1 = f"{fallback_name} reviews"
+                    search_query_2 = f"{fallback_name} cheap vs real"
                     
                     prompt = f"""
                     I cannot access page directly. 
@@ -319,7 +317,7 @@ if analysis_trigger:
                     {consistency_rules}
                     
                     OUTPUT:
-                    - "product_name": EXTRACT REAL NAME. Do not use ID.
+                    - "product_name": EXTRACT REAL NAME (Max 5 words).
                     - "detailed_technical_analysis": JSON OBJECT.
 
                     Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
@@ -339,10 +337,9 @@ if analysis_trigger:
                 STEP 1: READ TEXT & IDENTIFY PRODUCT from image.
                 STEP 2: SEARCH GOOGLE for the identified product.
                 
-                CONSISTENCY RULES:
-                1. **Generic/Unbranded/Clone:** MAX SCORE = 40.
-                2. **Impossible Specs:** MAX SCORE = 25.
-                3. **Known Brand:** BASE SCORE = 80.
+                CONSISTENCY LOCKDOWN:
+                1. **CATEGORY CAP:** Generic Drone/Projector -> MAX SCORE = 45.
+                2. **PRICE CHECK:** "Pro" specs for cheap price -> MAX SCORE = 45.
 
                 RETURN JSON:
                 {{
@@ -364,11 +361,11 @@ if analysis_trigger:
             score = extract_score_safely(result)
             standardized_verdict = get_standardized_verdict(score)
             
-            # --- NAME SANITIZATION ---
+            # --- FINAL NAME CLEANUP ---
             ai_name = result.get("product_name", "Unknown")
             clean_name = sanitize_product_name(ai_name)
             
-            # If the AI failed to give a good name, fall back to our URL extraction
+            # Fallback logic: If the AI returns garbage, use the URL extraction
             if clean_name == "Unidentified Item" and 'fallback_name' in locals() and fallback_name != "Unidentified Item":
                  final_name = fallback_name
             else:
