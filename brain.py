@@ -62,7 +62,8 @@ with st.sidebar:
                     args=(item,)
                 )
             with col2:
-                raw = item.get('score', 40)
+                # Default baseline is 35 (High Risk)
+                raw = item.get('score', 35)
                 score = int(raw)
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
                 st.write(f"{color} {score}")
@@ -102,7 +103,8 @@ def clean_and_parse_json(response_text):
 
 def extract_score_safely(result_dict):
     raw = result_dict.get("score")
-    score = 40 
+    # STRICT DEFAULT: If we don't know, it's a 35 (Red Flag).
+    score = 35 
     
     if isinstance(raw, (int, float)):
         score = int(raw)
@@ -208,7 +210,7 @@ else:
 if analysis_trigger:
     gemini_key, firecrawl_key = get_api_keys()
     result = {}
-    score = 40 
+    score = 35 
     product_image_url = None
     
     if analysis_trigger == "playback":
@@ -223,27 +225,28 @@ if analysis_trigger:
         try:
             client = genai.Client(api_key=gemini_key)
             
-            # --- GLOBAL CONSISTENCY RULES (Applied to ALL paths) ---
+            # --- THE GRID SYSTEM (Strict Lookup) ---
             consistency_rules = """
-            MANDATORY SCORING ALGORITHM (DO NOT DEVIATE):
+            VERITAS SCORING GRID (STRICT COMPLIANCE):
 
-            RULE 1: PLATFORM BLINDNESS
-            - Treat this product as if it is sold on AliExpress, even if the link is Amazon/Walmart.
-            - Ignore all "Star Ratings" provided in the text. They are likely fake.
-            
-            RULE 2: THE CHEAP TECH CEILING (STRICT)
-            - IF the product is a (Drone OR Projector OR Smartwatch OR Earbuds) AND Price is < $60:
-            - THEN the Score MUST BE between 10 and 45.
-            - IT IS FORBIDDEN to score > 45 for cheap generic electronics.
+            YOU ARE A PRICE-TO-PERFORMANCE AUDITOR. 
+            IGNORE ALL "STAR RATINGS" ON THE PAGE (THEY ARE OFTEN FAKE).
+            IGNORE THE PLATFORM (AMAZON/ALIEXPRESS/TEMU are treated equal).
 
-            RULE 3: THE IMPOSSIBLE SPEC PENALTY
-            - IF product claims "8K", "16TB", "Pro GPS" but is cheap -> SCORE = 10 (SCAM).
-            
-            SCORE GUIDE:
-            - 10-25: Scam / Fake Specs.
-            - 30-45: Cheap / Drop-shipped / Misleading.
-            - 50-65: Verified functional but mediocre.
-            - 70-100: Top Tier (Sony/DJI/Apple quality only).
+            LOOKUP TABLE (Use this to determine Max Score):
+            | CATEGORY | PRICE LIMIT | MAX SCORE | VERDICT |
+            | :--- | :--- | :--- | :--- |
+            | Drone / Quadcopter | < $60 | 35 | TOY GRADE / JUNK |
+            | Projector (1080p/4K) | < $80 | 35 | FAKE SPECS / DIM |
+            | Smartwatch (Clone) | < $40 | 35 | E-WASTE / LAGGY |
+            | Earbuds (TWS) | < $30 | 35 | POOR AUDIO / CLONE |
+            | Storage (1TB+ USB/SD)| < $20 | 10 | SCAM (FAKE CAPACITY) |
+
+            INSTRUCTIONS:
+            1. IDENTIFY Category and Price.
+            2. IF item falls into the table above, YOUR SCORE MUST BE BELOW THE MAX SCORE.
+            3. NO EXCEPTIONS for "Amazon Choice" or "Best Seller".
+            4. IF Unknown Brand + Cheap -> Default to Score 35.
             """
 
             # === PATH A: LINK ANALYSIS ===
@@ -281,12 +284,12 @@ if analysis_trigger:
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
 
                     prompt = f"""
-                    You are Veritas, a Forensic Analyst.
+                    You are Veritas.
                     {consistency_rules}
                     
                     TASK:
                     1. Extract Exact "product_name" (Max 5 words).
-                    2. Apply the Scoring Algorithm strictly.
+                    2. Apply Scoring Grid.
                     3. JSON Output (Title Case Keys).
 
                     Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
@@ -299,7 +302,7 @@ if analysis_trigger:
                     )
                     temp_result = clean_and_parse_json(response.text)
                     
-                    if temp_result.get("product_name") in ["Unknown", "Generic"] or extract_score_safely(temp_result) == 50:
+                    if temp_result.get("product_name") in ["Unknown", "Generic"] or extract_score_safely(temp_result) == 35:
                          scrape_error = True
                     else:
                         result = temp_result
@@ -307,7 +310,7 @@ if analysis_trigger:
                 # 2. Backup Deep Search
                 if scrape_error or not result:
                     search_query_1 = f"{fallback_name} reviews"
-                    search_query_2 = f"{fallback_name} fake vs real"
+                    search_query_2 = f"{fallback_name} real vs fake"
                     
                     prompt = f"""
                     I cannot access page directly. 
@@ -364,7 +367,6 @@ if analysis_trigger:
             ai_name = result.get("product_name", "Unknown")
             clean_name = sanitize_product_name(ai_name)
             
-            # Fallback logic
             if clean_name == "Unidentified Item" and 'fallback_name' in locals() and fallback_name != "Unidentified Item":
                  final_name = fallback_name
             else:
