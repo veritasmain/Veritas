@@ -62,7 +62,6 @@ with st.sidebar:
                     args=(item,)
                 )
             with col2:
-                # Default baseline is 35 (High Risk)
                 raw = item.get('score', 35)
                 score = int(raw)
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
@@ -105,7 +104,7 @@ def clean_and_parse_json(response_text):
 
 def extract_score_safely(result_dict):
     raw = result_dict.get("score")
-    score = 35 # Default Risk Score
+    score = 35 
     
     if isinstance(raw, (int, float)):
         score = int(raw)
@@ -129,11 +128,7 @@ def get_standardized_verdict(score):
         return "🌟 EXCELLENT: TOP TIER AUTHENTIC"
 
 def detect_category_from_url(url):
-    """
-    Forces the AI to stay on topic based on URL keywords.
-    """
     url_lower = url.lower()
-    
     if any(x in url_lower for x in ['drone', 'quadcopter', 'uav', 'fly', 'aircraft']):
         return "DRONE / QUADCOPTER"
     if any(x in url_lower for x in ['projector', 'cinema', '1080p', '4k', 'lumen']):
@@ -142,42 +137,63 @@ def detect_category_from_url(url):
         return "SMARTWATCH"
     if any(x in url_lower for x in ['earbud', 'headphone', 'tws', 'audio', 'sound']):
         return "AUDIO DEVICE"
-        
     return "UNKNOWN ELECTRONICS"
 
 def extract_name_from_url(url):
     try:
         path = urlparse(url).path
         if path.endswith('.html'): path = path[:-5]
-        
         segments = [s for s in path.split('/') if s and not s.isdigit()]
         if segments:
             slug = max(segments, key=len)
             clean_name = slug.replace('-', ' ').replace('_', ' ').title()
-            if len(clean_name) > 30:
-                clean_name = clean_name[:30] + "..."
-            if len(clean_name) > 3:
-                return clean_name
+            if len(clean_name) > 30: clean_name = clean_name[:30] + "..."
+            if len(clean_name) > 3: return clean_name
     except:
         pass
-    
     ali_match = re.search(r'/item/(\d+)\.html', url)
     if ali_match: return f"AliExpress Item {ali_match.group(1)}"
-    
     amz_match = re.search(r'/(dp|gp/product)/([A-Z0-9]{10})', url)
     if amz_match: return f"Amazon Item {amz_match.group(2)}"
-    
     return "Unidentified Item"
 
 def sanitize_product_name(name):
     if not name: return "Unidentified Item"
     if len(name) > 40: return "Unidentified Item"
-    
     bad_phrases = ["unable to", "cannot determine", "based on url", "placeholder", "unknown", "generic", "item", "product"]
-    if any(p in name.lower() for p in bad_phrases):
-        return "Unidentified Item"
-        
+    if any(p in name.lower() for p in bad_phrases): return "Unidentified Item"
     return name
+
+def filter_empty_sections(analysis_dict):
+    """
+    Removes sections that contain generic advice or are empty.
+    """
+    if not isinstance(analysis_dict, dict):
+        return {}
+        
+    cleaned_dict = {}
+    # Words that indicate the AI is giving advice instead of analysis
+    banned_phrases = [
+        "check for", "ensure that", "look for", "verify", "difficult to assess",
+        "depends on", "cannot determine", "impossible to", "without specific",
+        "potential for", "user reviews", "if known"
+    ]
+    
+    for key, value in analysis_dict.items():
+        # Skip if value is missing/empty
+        if not value: continue
+        
+        # Flatten lists to string for checking
+        val_str = str(value).lower()
+        
+        # Check if the content is just generic fluff
+        is_fluff = any(phrase in val_str for phrase in banned_phrases)
+        
+        # Only keep if it's NOT fluff and has substantial length
+        if not is_fluff and len(val_str) > 10:
+            cleaned_dict[key] = value
+            
+    return cleaned_dict
 
 # --- SCRAPING ---
 @st.cache_data(ttl="24h", show_spinner=False)
@@ -246,37 +262,30 @@ if analysis_trigger:
         try:
             client = genai.Client(api_key=gemini_key)
             
-            # --- THE GRID SYSTEM (Strict Lookup) ---
             consistency_rules = """
             VERITAS SCORING GRID (STRICT COMPLIANCE):
-
-            YOU ARE A PRICE-TO-PERFORMANCE AUDITOR. 
-            IGNORE ALL "STAR RATINGS" ON THE PAGE (THEY ARE OFTEN FAKE).
-            IGNORE THE PLATFORM (AMAZON/ALIEXPRESS/TEMU are treated equal).
-
-            LOOKUP TABLE (Use this to determine Max Score):
+            LOOKUP TABLE (Max Scores):
             | CATEGORY | PRICE LIMIT | MAX SCORE | VERDICT |
             | :--- | :--- | :--- | :--- |
             | Drone / Quadcopter | < $60 | 35 | TOY GRADE / JUNK |
             | Projector (1080p/4K) | < $80 | 35 | FAKE SPECS / DIM |
             | Smartwatch (Clone) | < $40 | 35 | E-WASTE / LAGGY |
             | Earbuds (TWS) | < $30 | 35 | POOR AUDIO / CLONE |
-            | Storage (1TB+ USB/SD)| < $20 | 10 | SCAM (FAKE CAPACITY) |
+            | Storage (1TB+) | < $20 | 10 | SCAM (FAKE CAPACITY) |
 
-            INSTRUCTIONS:
-            1. IDENTIFY Category and Price.
-            2. IF item falls into the table above, YOUR SCORE MUST BE BELOW THE MAX SCORE.
-            3. NO EXCEPTIONS for "Amazon Choice" or "Best Seller".
-            4. IF Unknown Brand + Cheap -> Default to Score 35.
+            MANDATORY INSTRUCTION: 
+            You are an AUDITOR, not a coach. 
+            DO NOT tell the user to "Check for" or "Look at". 
+            DO NOT say "Difficult to assess". 
+            ONLY output specific, factual findings. 
+            If you cannot find specific specs, DO NOT CREATE A SECTION for it.
             """
 
             # === PATH A: LINK ANALYSIS ===
             if analysis_trigger == "link" and target_url:
                 
                 fallback_name = extract_name_from_url(target_url)
-                # DETECT CATEGORY FROM URL TO PREVENT HALLUCINATIONS
                 detected_category = detect_category_from_url(target_url)
-                
                 is_hostile = "aliexpress" in target_url.lower() or "temu" in target_url.lower()
                 
                 scraped_data = None
@@ -291,9 +300,10 @@ if analysis_trigger:
                             if scraped_data:
                                 content = getattr(scraped_data, 'markdown', '')
                                 content_str = str(content).lower()
-                                is_trap = len(str(content)) < 600 or \
-                                          any(x in content_str for x in ["captcha", "robot check", "login", "access denied"])
-                                
+                                if len(content_str) < 500: 
+                                    scrape_error = True
+                                    break
+                                is_trap = any(x in content_str for x in ["captcha", "robot check", "login", "access denied"])
                                 if not is_trap:
                                     scrape_error = False
                                     break 
@@ -312,12 +322,16 @@ if analysis_trigger:
                     {consistency_rules}
                     
                     CRITICAL CONTEXT: The URL suggests this item is a: {detected_category}. 
-                    IF your analysis finds "Smart Glasses" or "Vacuum" but the Hint is "DRONE", TRUST THE HINT.
                     
                     TASK:
                     1. Extract Exact "product_name" (Max 5 words).
                     2. Apply Scoring Grid.
                     3. JSON Output (Title Case Keys).
+                    
+                    FOR "detailed_technical_analysis":
+                    - Only include keys where you have found SPECIFIC DATA.
+                    - Example: "Battery": ["1800mAh (Weak)"] -> GOOD.
+                    - Example: "Battery": ["Check manufacturer site"] -> BAD. DELETE IT.
 
                     Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:25000]}
@@ -338,8 +352,6 @@ if analysis_trigger:
                 if scrape_error or not result:
                     search_query_1 = f"{fallback_name} reviews"
                     search_query_2 = f"{fallback_name} real vs fake"
-                    
-                    # Force "Drone" into the prompt if detected
                     context_injection = ""
                     if detected_category != "UNKNOWN ELECTRONICS":
                         context_injection = f"THIS IS A {detected_category}. Focus search on {detected_category} reviews."
@@ -355,7 +367,7 @@ if analysis_trigger:
                     
                     OUTPUT:
                     - "product_name": EXTRACT REAL NAME (Max 5 words).
-                    - "detailed_technical_analysis": JSON OBJECT.
+                    - "detailed_technical_analysis": JSON OBJECT. Only include keys with ACTUAL findings.
 
                     Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -436,7 +448,7 @@ if analysis_trigger:
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}<span style='font-size: 40px; color: grey;'>/100</span></h1>", unsafe_allow_html=True)
-        # Safe access for variable
+        # Safe access
         verdict_text = locals().get('standardized_verdict', result.get('verdict', 'Analysis Complete'))
         st.markdown(f"<h3 style='text-align: center;'>{verdict_text}</h3>", unsafe_allow_html=True)
         
@@ -453,10 +465,13 @@ if analysis_trigger:
         
         st.divider()
         
-        with st.expander("🔍 Click for Deep Dive Analysis"):
-            analysis_data = result.get("detailed_technical_analysis", {})
-            if isinstance(analysis_data, dict):
-                for header, bullets in analysis_data.items():
+        # --- DEEP DIVE WITH EMPTY SECTION FILTER ---
+        raw_analysis_data = result.get("detailed_technical_analysis", {})
+        cleaned_analysis = filter_empty_sections(raw_analysis_data)
+        
+        if cleaned_analysis:
+            with st.expander("🔍 Click for Deep Dive Analysis"):
+                for header, bullets in cleaned_analysis.items():
                     clean_header = header.replace("_", " ").title()
                     st.markdown(f"### {clean_header}") 
                     if isinstance(bullets, list):
@@ -464,9 +479,9 @@ if analysis_trigger:
                             st.markdown(f"- {bullet}")
                     else:
                         st.markdown(str(bullets))
-                    st.markdown("") 
-            else:
-                st.markdown(str(analysis_data))
+                    st.markdown("")
+        else:
+            st.caption("No deep technical data available for this item.")
 
     with t2:
         st.subheader("Consensus")
