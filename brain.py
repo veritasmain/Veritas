@@ -208,11 +208,12 @@ if analysis_trigger:
                     - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
 
                     TASK 2: MARKET COMPARISON (CRITICAL)
-                    - "detailed_technical_analysis": Compare the link provided vs. other sites. (e.g. "Temu price $15 vs Amazon price $45 for identical item").
+                    - "detailed_technical_analysis": MUST be a JSON OBJECT. Keys are HEADERS, Values are LISTS of bullet points.
+                    - Example: {{"Price Analysis": ["Temu: $15", "Amazon: $45"], "Spec Check": ["Battery fake", "Lens plastic"]}}
 
                     TASK 3: REVIEW SOURCING
-                    - "reviews_summary": DO NOT BE VAGUE. Quote specific metrics if possible (e.g. "Battery lasted 12 mins"). Cite sources (Amazon, Reddit, etc.).
-                    - "key_complaints": "Feature: Specific failure" (e.g. "Battery: Dies in 20 mins").
+                    - "reviews_summary": LIST of strings. Each string must be a full sentence citing a source.
+                    - "key_complaints": LIST of strings. "Feature: Specific failure" (e.g. "Battery: Dies in 20 mins").
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:20000]}
@@ -230,8 +231,8 @@ if analysis_trigger:
                     
                     OUTPUT REQUIREMENTS:
                     - "verdict": SHORT & PUNCHY (Max 15 words).
-                    - "reviews_summary": Detailed summaries per source. Cite sources.
-                    - "detailed_technical_analysis": COMPARE specs across sites.
+                    - "reviews_summary": LIST of strings. Detailed summaries per source.
+                    - "detailed_technical_analysis": JSON OBJECT. Keys = Headers, Values = List of strings.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -260,14 +261,15 @@ if analysis_trigger:
                 STEP 3: VERDICT
                    - SHORT and PUNCHY (Max 15 words).
 
-                STEP 4: CROSS-REFERENCE ANALYSIS (CRITICAL)
-                   - "detailed_technical_analysis": EXPLICITLY COMPARE the screenshot to the search results.
-                   - Example: "Screenshot claims '4K', but verified Amazon listing for this exact mold (Model X) confirms it is only 720p."
-                   - Example: "Screenshot price is $50, but identical item found on AliExpress for $12."
+                STEP 4: CROSS-REFERENCE ANALYSIS (STRUCTURED)
+                   - "detailed_technical_analysis": Return a JSON OBJECT.
+                   - Keys are Headers (e.g. "Price Arbitrage Check", "Spec Verification").
+                   - Values are LISTS of bullet points.
+                   - Example: {{"AliExpress Match": ["Found identical item for $5", "Screenshot price is $50"]}}
 
                 STEP 5: REVIEWS
-                   - "reviews_summary": Detailed analysis. Do not summarize broadly. Quote specific issues (e.g. "Users report the drone drifts left constantly"). Cite sources.
-                   - "key_complaints": "Feature: Specific technical failure".
+                   - "reviews_summary": LIST of strings. Detailed 2-3 sentence summaries per source.
+                   - "key_complaints": LIST of strings. "Feature: Specific technical failure".
 
                 Return JSON keys: 
                 "product_name", "score", "verdict", "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
@@ -316,7 +318,6 @@ if analysis_trigger:
     
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
-        # FIX: Added /100 to the score display
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}<span style='font-size: 40px; color: grey;'>/100</span></h1>", unsafe_allow_html=True)
         st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Done')}</h3>", unsafe_allow_html=True)
         
@@ -333,42 +334,44 @@ if analysis_trigger:
 
     with t2:
         st.subheader("Consensus")
-        if result.get("key_complaints"):
-            st.error("🚨 Critical Failure Points:")
-            for c in result.get("key_complaints", []): st.markdown(f"**-** {c}")
         
-        summary_text = result.get("reviews_summary", "No reviews found.")
-        if isinstance(summary_text, list):
-            summary_text = "\n\n".join(summary_text) 
-        elif not isinstance(summary_text, str):
-            summary_text = str(summary_text)
-            
-        formatted_summary = summary_text.replace("•", "\n\n•").replace("- ", "\n- ")
-        st.info(formatted_summary)
+        # 1. Display Complaints (Red)
+        if result.get("key_complaints"):
+            for c in result.get("key_complaints", []): 
+                st.markdown(f"**🚨** {c}")
+        
+        st.divider()
+        
+        # 2. Display General Reviews (Bullet Points)
+        st.subheader("Source Summaries")
+        reviews_data = result.get("reviews_summary", [])
+        
+        # Handle List vs String vs None
+        if isinstance(reviews_data, list):
+            for review in reviews_data:
+                st.markdown(f"**•** {review}")
+        elif isinstance(reviews_data, str):
+            st.markdown(reviews_data)
+        else:
+            st.caption("No review data found.")
 
     with t3:
         st.subheader("Red Flags")
         for flag in result.get("red_flags", []): st.markdown(f"**•** {flag}")
         
         st.divider()
-        st.subheader("Technical Deep Dive")
         
-        # --- FIX: SMART FORMATTER FOR ANALYSIS ---
-        analysis_data = result.get("detailed_technical_analysis", "N/A")
+        # --- FIXED SMART FORMATTER (Big Headers + Bullets) ---
+        analysis_data = result.get("detailed_technical_analysis", {})
         
-        # Check if it's a Dictionary (The weird output you saw)
         if isinstance(analysis_data, dict):
-            for header, content in analysis_data.items():
-                st.markdown(f"### {header}")
-                if isinstance(content, list):
-                    for item in content:
-                        st.markdown(f"- {item}")
+            for header, bullets in analysis_data.items():
+                st.markdown(f"### {header}") # Big Header
+                if isinstance(bullets, list):
+                    for bullet in bullets:
+                        st.markdown(f"- {bullet}") # Bullet points
                 else:
-                    st.markdown(content)
-        # Check if it's a List
-        elif isinstance(analysis_data, list):
-            for item in analysis_data:
-                st.markdown(f"- {item}")
-        # Default (String)
+                    st.markdown(str(bullets))
+                st.markdown("") # Spacing
         else:
             st.markdown(str(analysis_data))
