@@ -177,7 +177,6 @@ if analysis_trigger:
         st.success(f"📂 Loaded from History: {data['source']}")
 
     elif gemini_key and firecrawl_key:
-        # --- SILENT MODE: Just "Verifying..." ---
         status_box = st.status("Verifying...", expanded=False)
         
         try:
@@ -188,7 +187,6 @@ if analysis_trigger:
                 
                 fallback_name = extract_id_from_url(target_url)
                 
-                # Smart Bypass Check
                 is_hostile = "aliexpress" in target_url.lower() or "temu" in target_url.lower()
                 
                 scraped_data = None
@@ -196,7 +194,6 @@ if analysis_trigger:
                 content = ""
                 
                 if not is_hostile:
-                    # Silent Retry Loop
                     MAX_RETRIES = 5
                     for attempt in range(MAX_RETRIES):
                         try:
@@ -215,7 +212,6 @@ if analysis_trigger:
                         except:
                             pass
                 
-                # Primary Analysis
                 if not scrape_error and scraped_data:
                     meta = getattr(scraped_data, 'metadata', {})
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
@@ -225,19 +221,20 @@ if analysis_trigger:
                     
                     STRICT SCORING PROTOCOL:
                     - 0-25: DANGEROUS / SCAM / FAKE ITEM.
-                    - 30-45: MISLEADING / LOW QUALITY. (If specs are fake/misleading e.g. "Fake 4K", MAX SCORE IS 45).
-                    - 50-65: MEDIOCRE / YOU GET WHAT YOU PAY FOR.
-                    - 70-85: GOOD / RELIABLE.
+                    - 30-45: MISLEADING / LOW QUALITY.
+                    - 50-65: MEDIOCRE.
+                    - 70-85: GOOD.
                     - 90-100: EXCELLENT.
                     
-                    **LIAR'S PENALTY:** If the product description makes false claims, the score CANNOT exceed 25.
-
                     TASK 1: EXACT NAMING
-                    - "product_name": Use exact Brand & Model. If blocked/unknown, return "Generic".
+                    - "product_name": Use exact Brand & Model.
 
                     TASK 2: REVIEWS
-                    - "reviews_summary": LIST of strings. Cite sources.
-                    - "key_complaints": LIST of strings. Attribute to "User reviews".
+                    - "reviews_summary": LIST of strings.
+                    - "key_complaints": LIST of strings.
+
+                    TASK 3: TECHNICAL ANALYSIS (FORMATTING CRITICAL)
+                    - "detailed_technical_analysis": JSON OBJECT. Keys must be Human Readable Title Case (e.g. "Battery Life", not "battery_life"). Values must be Lists of Strings.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:25000]}
@@ -256,26 +253,23 @@ if analysis_trigger:
                     else:
                         result = temp_result
 
-                # Backup Search (Silent Switch)
+                # Backup Search
                 if scrape_error or not result:
                     prompt = f"""
-                    I cannot access page directly (Scraper Blocked/Bypassed). URL: {target_url}
+                    I cannot access page directly. URL: {target_url}
                     1. EXTRACT ID/ASIN from URL.
-                    2. SEARCH Google for ID + "Review" + "Reddit".
+                    2. SEARCH Google for ID + "Review".
                     
                     STRICT SCORING PROTOCOL:
-                    - 0-25: SCAM / FAKE SPECS.
-                    - 30-45: MISLEADING / TRASH. (If product is "Misleading", MAX SCORE IS 45).
+                    - 0-25: SCAM / FAKE.
+                    - 30-45: MISLEADING / TRASH.
                     - 50-65: MEDIOCRE.
                     - 70-85: GOOD.
                     
-                    **LIAR'S PENALTY:** If reviews indicate misleading specs, SCORE MUST BE UNDER 45.
-                    
                     OUTPUT REQUIREMENTS:
-                    - "product_name": EXACT BRAND & MODEL. Do NOT use "Unknown". Use the Google snippet title.
-                    - "verdict": SHORT & PUNCHY (Max 15 words).
-                    - "reviews_summary": LIST of strings.
-                    - "detailed_technical_analysis": JSON OBJECT.
+                    - "product_name": EXACT BRAND & MODEL.
+                    - "verdict": SHORT & PUNCHY.
+                    - "detailed_technical_analysis": JSON OBJECT. Keys must be Title Case (e.g. "Price Analysis").
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -290,20 +284,32 @@ if analysis_trigger:
             elif analysis_trigger == "image" and uploaded_image:
                 prompt = """
                 YOU ARE A FORENSIC ANALYST.
-                STEP 1: IDENTIFY & SEARCH Google for item in image.
+                
+                STEP 1: READ TEXT & IDENTIFY PRODUCT from image.
+                STEP 2: SEARCH GOOGLE for the identified product to find reviews/price.
+                STEP 3: COMPARE Screenshot claims vs Real World data.
                 
                 STRICT SCORING PROTOCOL:
                 - 0-25: SCAM / FAKE SPECS.
-                - 30-45: MISLEADING / LOW QUALITY. (If item is misleading, MAX SCORE IS 45).
+                - 30-45: MISLEADING / LOW QUALITY.
                 - 50-65: MEDIOCRE.
                 - 70-100: GOOD.
 
-                STEP 3: Return JSON with "product_name", "score", "verdict", "reviews_summary", "detailed_technical_analysis".
+                RETURN JSON ONLY:
+                {
+                    "product_name": "Brand Model",
+                    "score": 0-100,
+                    "verdict": "Short headline",
+                    "reviews_summary": ["Point 1", "Point 2"],
+                    "key_complaints": ["Complaint 1"],
+                    "detailed_technical_analysis": {"Price Check": ["..."], "Spec Verify": ["..."]}
+                }
                 """
+                # Relaxed temperature for vision to prevent 0 score lock-up
                 response = client.models.generate_content(
                     model='gemini-2.0-flash', 
                     contents=[prompt, uploaded_image],
-                    config={'tools': [{'google_search': {}}], 'temperature': 0.0} 
+                    config={'tools': [{'google_search': {}}], 'temperature': 0.1} 
                 )
                 result = clean_and_parse_json(response.text)
 
@@ -380,11 +386,13 @@ if analysis_trigger:
         for flag in result.get("red_flags", []): st.markdown(f"**•** {flag}")
         
         st.divider()
-        # Smart Formatter for Analysis Dictionary
+        # --- FIXED: Title Case Beautifier ---
         analysis_data = result.get("detailed_technical_analysis", {})
         if isinstance(analysis_data, dict):
             for header, bullets in analysis_data.items():
-                st.markdown(f"### {header}") 
+                # Force Title Case (e.g. "suction_power" -> "Suction Power")
+                clean_header = header.replace("_", " ").title()
+                st.markdown(f"### {clean_header}") 
                 if isinstance(bullets, list):
                     for bullet in bullets:
                         st.markdown(f"- {bullet}")
