@@ -189,7 +189,7 @@ if analysis_trigger:
                     You are Veritas. Analyze this product.
                     
                     TASK 1: SHORT VERDICT
-                    - "verdict": Must be SHORT and PUNCHY (Max 15 words). Headline style. (e.g. "HIGH RISK: Fake specs contradicted by Amazon reviews.").
+                    - "verdict": SHORT and PUNCHY (Max 15 words). Headline style. (e.g. "HIGH RISK: Fake specs contradicted by Amazon reviews.").
 
                     TASK 2: CROSS-REFERENCE CHECK
                     - "detailed_technical_analysis": Compare the user's link vs. other sites. 
@@ -312,8 +312,14 @@ if analysis_trigger:
             st.error("🚨 Critical Failure Points:")
             for c in result.get("key_complaints", []): st.markdown(f"**-** {c}")
         
-        # Formatted blue box (vertical bullets)
+        # --- FIXED CRASH: Ensure summary_text is a string before replacing ---
         summary_text = result.get("reviews_summary", "No reviews found.")
+        
+        if isinstance(summary_text, list):
+            summary_text = "\n".join(summary_text)
+        elif not isinstance(summary_text, str):
+            summary_text = str(summary_text)
+            
         formatted_summary = summary_text.replace("•", "\n\n•").replace("- ", "\n- ")
         st.info(formatted_summary)
 
