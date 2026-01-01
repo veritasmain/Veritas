@@ -95,12 +95,24 @@ def clean_and_parse_json(response_text):
             return {}
 
 def extract_score_safely(result_dict):
+    """
+    Extracts score and rounds it to the nearest multiple of 5.
+    """
     raw = result_dict.get("score")
-    if isinstance(raw, (int, float)): return int(raw)
-    if isinstance(raw, str):
+    score = 50 # Default neutral
+    
+    if isinstance(raw, (int, float)):
+        score = int(raw)
+    elif isinstance(raw, str):
         nums = re.findall(r'\d+', raw)
-        if nums: return int(nums[0])
-    return 50
+        if nums:
+            score = int(nums[0])
+            
+    # Round to nearest 5
+    score = 5 * round(score / 5)
+    
+    # Ensure bounds 0-100
+    return max(0, min(100, score))
 
 # --- SCRAPING ---
 @st.cache_data(ttl="24h", show_spinner=False)
@@ -188,15 +200,21 @@ if analysis_trigger:
                     prompt = f"""
                     You are Veritas. Analyze this product.
                     
+                    SCORING RULES (MULTIPLES OF 5 ONLY):
+                    - 0-25: TOTAL SCAM (Item doesn't match description, AI hallucination, dangerous).
+                    - 30-50: POOR VALUE (Generic dropshipping junk, fake specs, but a real physical item).
+                    - 55-75: DECENT (Functional, honest pricing, average quality).
+                    - 80-100: EXCELLENT (Verified Brand, High value).
+
                     TASK 1: SHORT VERDICT
                     - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
 
                     TASK 2: DETAILED ANALYSIS
-                    - "detailed_technical_analysis": Use MARKDOWN HEADERS (###) for categories. Under each header, use BULLET POINTS ONLY for specific comparisons (e.g. "Temu claims 4K, Amazon B0XX says 1080p").
-                    - Explicitly name other websites found.
+                    - "detailed_technical_analysis": Use MARKDOWN HEADERS (###) and BULLET POINTS.
+                    - Compare the user's link vs. other sites explicitly.
 
                     TASK 3: REVIEW SOURCING
-                    - "reviews_summary": Provide a DETAILED summary (2-3 sentences per source). Cite the source explicitly (e.g. "Amazon Reviews: [Summary]", "Reddit Threads: [Summary]").
+                    - "reviews_summary": Detailed 2-3 sentence summaries per source. Cite sources (Amazon, Reddit, etc.).
                     - "key_complaints": "Feature: Specific failure" (e.g. "Battery: Dies in 20 mins").
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
@@ -209,10 +227,14 @@ if analysis_trigger:
                     I cannot access page. URL: {target_url}
                     1. EXTRACT ID. 2. SEARCH Google for ID + "Review" + "Reddit".
                     
+                    SCORING RULES (MULTIPLES OF 5 ONLY):
+                    - 0-25: TOTAL SCAM / PHISHING.
+                    - 30-50: DROPSHIPPING / LOW QUALITY.
+                    
                     OUTPUT REQUIREMENTS:
                     - "verdict": SHORT & PUNCHY (Max 15 words).
                     - "reviews_summary": Detailed 2-3 sentence summaries per source. Cite sources.
-                    - "detailed_technical_analysis": Use MARKDOWN HEADERS and BULLET POINTS. No block text.
+                    - "detailed_technical_analysis": Use MARKDOWN HEADERS and BULLET POINTS.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -230,14 +252,19 @@ if analysis_trigger:
                 
                 1. IDENTIFY: Read text. Search Google for "product name reviews".
                 
-                2. VERDICT: SHORT and PUNCHY (Max 15 words).
+                2. SCORING RULES (MULTIPLES OF 5 ONLY):
+                   - 0-25: TOTAL SCAM (Image shows 4K camera, real item is a plastic toy; or nothing arrives).
+                   - 30-55: POOR VALUE (Real item, but overpriced or lower quality than implied. e.g. Upscaled 1080p).
+                   - 60-100: LEGIT (Product matches description).
 
-                3. CROSS-REFERENCE ANALYSIS:
+                3. VERDICT: SHORT and PUNCHY (Max 15 words).
+
+                4. CROSS-REFERENCE ANALYSIS:
                    - In "detailed_technical_analysis": Use MARKDOWN HEADERS (###). Under each header, use BULLET POINTS ONLY.
-                   - Compare screenshot claims vs external reality. "Screenshot shows '4K', but external Amazon listing (Model XYZ) confirms it is only 720p."
+                   - Compare screenshot claims vs external reality.
 
-                4. REVIEWS:
-                   - "reviews_summary": Detailed 2-3 sentence summaries per source (e.g. "YouTube [Channel]: The reviewer demonstrated that...").
+                5. REVIEWS:
+                   - "reviews_summary": Detailed 2-3 sentence summaries per source.
                    - "key_complaints": "Feature: Specific technical failure".
 
                 Return JSON keys: 
@@ -288,6 +315,7 @@ if analysis_trigger:
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
+        # Display the SHORT verdict here
         st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Done')}</h3>", unsafe_allow_html=True)
         
         with st.expander("ℹ️ Why is this score different on other sites?"):
