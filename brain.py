@@ -210,7 +210,7 @@ if analysis_trigger:
                     
                     STRICT SCORING RULES (MULTIPLES OF 5 ONLY):
                     - 0-25: SCAM / DANGEROUS / FAKE ITEM.
-                    - 30-45: SIGNIFICANT ISSUES. (If reviews say "Trash", "Broken", or "Features don't work", MAX SCORE IS 45).
+                    - 30-45: SIGNIFICANT ISSUES. (If reviews say "Trash", "Broken", or "Features don't work", MAX SCORE IS 45. DO NOT GIVE 60+).
                     - 50-75: DECENT / AVERAGE.
                     - 80-100: EXCELLENT (Verified Authentic).
                     
@@ -233,7 +233,7 @@ if analysis_trigger:
                     TASK 4: REVIEW SOURCING & SKEPTICISM
                     - Assume 20% of positive reviews are fake. Look for specific complaints.
                     - "reviews_summary": LIST of strings. Full sentences citing sources.
-                    - "key_complaints": LIST of strings. "Feature: Specific failure".
+                    - "key_complaints": LIST of strings. MUST Attribute to reviews. Format: "Feature: Reviewers report X" (e.g. "Shipping: Users complain of fake tracking").
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:20000]}
@@ -242,7 +242,6 @@ if analysis_trigger:
                 else:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     
-                    # --- FIXED: UNCERTAINTY CAP ---
                     prompt = f"""
                     I cannot access page directly (Scraper Blocked). URL: {target_url}
                     1. EXTRACT ID/ASIN from URL.
@@ -253,7 +252,6 @@ if analysis_trigger:
                     - 30-45: TRASH / BROKEN (Significant functional issues).
                     - 50-75: AVERAGE.
                     - 80-85: EXCELLENT (CAPPED AT 85 because direct page verification failed).
-                    - DO NOT GIVE 90-100/100 IN THIS MODE.
                     
                     **PLATFORM PENALTY CAP:** Max 10 points deduction.
                     
@@ -261,7 +259,7 @@ if analysis_trigger:
                     - "product_name": EXACT BRAND & MODEL.
                     - "verdict": SHORT & PUNCHY (Max 15 words).
                     - "reviews_summary": LIST of strings. Detailed summaries per source.
-                    - "key_complaints": LIST of strings. "Feature: Specific failure".
+                    - "key_complaints": LIST of strings. MUST Attribute to reviews. Format: "Feature: User reported X".
                     - "detailed_technical_analysis": JSON OBJECT (Headers -> Bullets).
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
@@ -301,7 +299,7 @@ if analysis_trigger:
 
                 STEP 5: REVIEWS
                    - "reviews_summary": LIST of strings. Detailed 2-3 sentence summaries per source.
-                   - "key_complaints": LIST of strings. "Feature: Specific technical failure".
+                   - "key_complaints": LIST of strings. MUST Attribute to reviews. Format: "Feature: User reported X".
 
                 Return JSON keys: 
                 "product_name", "score", "verdict", "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
@@ -407,4 +405,3 @@ if analysis_trigger:
                 st.markdown("") 
         else:
             st.markdown(str(analysis_data))
-
