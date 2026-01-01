@@ -182,12 +182,22 @@ if analysis_trigger:
                 status_box.write("🌐 Scouting website...")
                 scraped_data = None
                 scrape_error = False
+                page_title_meta = ""
+
                 try:
                     scraped_data = scrape_website(target_url, firecrawl_key)
                     content = getattr(scraped_data, 'markdown', '')
-                    is_trap = len(str(content)) < 500 or "verify" in str(content).lower()
-                    if is_trap and "amazon" not in target_url.lower(): scrape_error = True
-                except: scrape_error = True
+                    meta = getattr(scraped_data, 'metadata', {})
+                    page_title_meta = meta.get('title', '')
+                    
+                    # Improved Amazon Trap Detection
+                    is_trap = len(str(content)) < 600 or "captcha" in str(content).lower() or "robot check" in str(content).lower()
+                    
+                    if is_trap: 
+                        scrape_error = True
+                        status_box.write("⚠️ Site blocked access. Engaging Backup Search...")
+                except: 
+                    scrape_error = True
 
                 if not scrape_error and scraped_data:
                     status_box.write("🧠 Reading content...")
@@ -200,16 +210,17 @@ if analysis_trigger:
                     
                     STRICT SCORING RULES (MULTIPLES OF 5 ONLY):
                     - 0-25: SCAM / DANGEROUS / FAKE ITEM.
-                    - 30-45: SIGNIFICANT ISSUES. (If reviews say "Trash", "Broken", or "Features don't work", MAX SCORE IS 45. DO NOT GIVE 60+).
+                    - 30-45: SIGNIFICANT ISSUES. (If reviews say "Trash", "Broken", or "Features don't work", MAX SCORE IS 45).
                     - 50-75: DECENT / AVERAGE.
                     - 80-100: EXCELLENT.
                     
                     **PLATFORM PENALTY CAP:**
-                    - If the product is on Temu/AliExpress vs Amazon: Deduct MAX 10 POINTS for platform risk (shipping/returns).
-                    - DO NOT deduct more than 10 points solely because of the website. Score based on the PRODUCT QUALITY.
+                    - If Temu/AliExpress: Deduct MAX 10 POINTS.
+                    - Do not deduct more than 10 points solely for the website URL.
 
                     TASK 1: EXACT NAMING
-                    - "product_name": EXTRACT THE EXACT BRAND AND MODEL (e.g. "GTMEDIA N1"). Do NOT use generic names like "Night Vision Device" unless no brand exists.
+                    - "product_name": Use the exact Brand & Model found in the text. 
+                    - If the text is vague, use this Page Title: "{page_title_meta}"
 
                     TASK 2: SHORT VERDICT
                     - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
@@ -230,20 +241,22 @@ if analysis_trigger:
                 else:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     prompt = f"""
-                    I cannot access page. URL: {target_url}
-                    1. EXTRACT ID. 2. SEARCH Google for ID + "Review" + "Reddit" + "AliExpress".
+                    I cannot access page directly (Scraper Blocked). URL: {target_url}
+                    1. EXTRACT ID/ASIN from URL.
+                    2. SEARCH Google for ID + "Review" + "Reddit" + "AliExpress".
                     
                     STRICT SCORING (MULTIPLES OF 5 ONLY):
                     - 0-25: SCAM.
-                    - 30-45: TRASH / BROKEN (Max score 45 if functional issues exist).
+                    - 30-45: TRASH / BROKEN.
                     
-                    **PLATFORM PENALTY CAP:** Max 10 points deduction for platform risk.
+                    **PLATFORM PENALTY CAP:** Max 10 points deduction.
                     
                     OUTPUT REQUIREMENTS:
                     - "product_name": EXACT BRAND & MODEL.
                     - "verdict": SHORT & PUNCHY (Max 15 words).
                     - "reviews_summary": LIST of strings. Detailed summaries per source.
-                    - "detailed_technical_analysis": JSON OBJECT.
+                    - "key_complaints": LIST of strings. "Feature: Specific failure".
+                    - "detailed_technical_analysis": JSON OBJECT (Headers -> Bullets).
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -271,7 +284,6 @@ if analysis_trigger:
                    
                 **PLATFORM PENALTY CAP:**
                    - If screenshot is from Temu/AliExpress: Deduct MAX 10 POINTS for platform risk.
-                   - If the product itself is good, it should still score decently (e.g. 65-75).
 
                 STEP 3: VERDICT
                    - SHORT and PUNCHY (Max 15 words).
@@ -279,7 +291,7 @@ if analysis_trigger:
                 STEP 4: CROSS-REFERENCE ANALYSIS (STRUCTURED JSON)
                    - "detailed_technical_analysis": JSON OBJECT (Headers -> Bullets).
                    - PRICE: Use relative terms ("Cheaper elsewhere", "Markup detected").
-                   - SPECS: Do NOT guess (e.g. "Likely 720p"). Instead say: "Not as advertised on verified sources" or "Discrepancy detected".
+                   - SPECS: Do NOT guess. Say "Not as advertised on verified sources" if conflicting.
 
                 STEP 5: REVIEWS
                    - "reviews_summary": LIST of strings. Detailed 2-3 sentence summaries per source.
@@ -300,7 +312,12 @@ if analysis_trigger:
             score = extract_score_safely(result)
             
             final_name = result.get("product_name", "Unidentified Item")
-            if final_name in ["Unknown", "N/A"]: final_name = "Scanned Item (Generic)"
+            if final_name in ["Unknown", "N/A", "Unidentified Item"]:
+                 # Fallback: If AI failed, use title from scrape if available
+                 if 'page_title_meta' in locals() and page_title_meta:
+                     final_name = page_title_meta[:40] + "..." # Truncate if long
+                 else:
+                     final_name = "Scanned Item (Generic)"
 
             st.session_state.history.append({
                 "source": final_name,
@@ -349,14 +366,11 @@ if analysis_trigger:
     with t2:
         st.subheader("Consensus")
         
-        # 1. Display Complaints (Red)
         if result.get("key_complaints"):
             for c in result.get("key_complaints", []): 
                 st.markdown(f"**🚨** {c}")
         
         st.divider()
-        
-        # 2. Display General Reviews (Bullet Points)
         st.subheader("Source Summaries")
         reviews_data = result.get("reviews_summary", [])
         
