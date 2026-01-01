@@ -1,4 +1,4 @@
-import streamlit as st
+ import streamlit as st
 from google import genai
 from firecrawl import Firecrawl
 from PIL import Image
@@ -190,7 +190,7 @@ if analysis_trigger:
                     meta = getattr(scraped_data, 'metadata', {})
                     page_title_meta = meta.get('title', '')
                     
-                    # Improved Amazon Trap Detection
+                    # Amazon Trap Detection
                     is_trap = len(str(content)) < 600 or "captcha" in str(content).lower() or "robot check" in str(content).lower()
                     
                     if is_trap: 
@@ -212,7 +212,7 @@ if analysis_trigger:
                     - 0-25: SCAM / DANGEROUS / FAKE ITEM.
                     - 30-45: SIGNIFICANT ISSUES. (If reviews say "Trash", "Broken", or "Features don't work", MAX SCORE IS 45).
                     - 50-75: DECENT / AVERAGE.
-                    - 80-100: EXCELLENT.
+                    - 80-100: EXCELLENT (Verified Authentic).
                     
                     **PLATFORM PENALTY CAP:**
                     - If Temu/AliExpress: Deduct MAX 10 POINTS.
@@ -230,7 +230,8 @@ if analysis_trigger:
                     - PRICE: Use relative terms ("Cheaper", "Similar"). No exact prices.
                     - SPECS: Do NOT guess. If specs differ, say "Not as advertised on verified sources".
 
-                    TASK 4: REVIEW SOURCING
+                    TASK 4: REVIEW SOURCING & SKEPTICISM
+                    - Assume 20% of positive reviews are fake. Look for specific complaints.
                     - "reviews_summary": LIST of strings. Full sentences citing sources.
                     - "key_complaints": LIST of strings. "Feature: Specific failure".
 
@@ -240,6 +241,8 @@ if analysis_trigger:
                     response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
                 else:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
+                    
+                    # --- FIXED: UNCERTAINTY CAP ---
                     prompt = f"""
                     I cannot access page directly (Scraper Blocked). URL: {target_url}
                     1. EXTRACT ID/ASIN from URL.
@@ -247,7 +250,10 @@ if analysis_trigger:
                     
                     STRICT SCORING (MULTIPLES OF 5 ONLY):
                     - 0-25: SCAM.
-                    - 30-45: TRASH / BROKEN.
+                    - 30-45: TRASH / BROKEN (Significant functional issues).
+                    - 50-75: AVERAGE.
+                    - 80-85: EXCELLENT (CAPPED AT 85 because direct page verification failed).
+                    - DO NOT GIVE 90-100/100 IN THIS MODE.
                     
                     **PLATFORM PENALTY CAP:** Max 10 points deduction.
                     
@@ -313,9 +319,8 @@ if analysis_trigger:
             
             final_name = result.get("product_name", "Unidentified Item")
             if final_name in ["Unknown", "N/A", "Unidentified Item"]:
-                 # Fallback: If AI failed, use title from scrape if available
                  if 'page_title_meta' in locals() and page_title_meta:
-                     final_name = page_title_meta[:40] + "..." # Truncate if long
+                     final_name = page_title_meta[:40] + "..."
                  else:
                      final_name = "Scanned Item (Generic)"
 
