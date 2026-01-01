@@ -21,7 +21,6 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "playback_data" not in st.session_state:
     st.session_state.playback_data = None
-# FIX: Counter for key rotation (prevents file uploader crash)
 if "uploader_id" not in st.session_state:
     st.session_state.uploader_id = 0
 
@@ -31,7 +30,6 @@ def clear_url_input():
     st.session_state.playback_data = None 
 
 def clear_img_input():
-    # FIX: Increment ID to force a fresh file uploader widget
     st.session_state.uploader_id += 1
     st.session_state.playback_data = None
 
@@ -133,7 +131,6 @@ if not st.session_state.playback_data:
             st.button("New Link", type="secondary", use_container_width=True, on_click=clear_url_input)
             
     with tab2:
-        # Dynamic key based on uploader_id to prevent Streamlit crashes
         current_key = f"uploader_{st.session_state.uploader_id}"
         uploaded_file = st.file_uploader("Upload Screenshot", type=["png", "jpg", "jpeg"], key=current_key)
         
@@ -189,18 +186,19 @@ if analysis_trigger:
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
 
                     prompt = f"""
-                    You are Veritas, a Senior Product Forensic Analyst. 
-                    Analyze this product listing with high technical scrutiny.
+                    You are Veritas. Analyze this product.
                     
-                    CITATION RULE:
-                    - If you find specs (e.g., "4K", "Titanium") on *external* sites (like AliExpress) that are NOT in the text provided, YOU MUST STATE: "External listings claim..." or "Cross-reference data indicates...". 
-                    - Do NOT imply the user's link claims it unless it's in the text.
+                    TASK 1: SHORT VERDICT
+                    - "verdict": Must be SHORT and PUNCHY (Max 15 words). Headline style. (e.g. "HIGH RISK: Fake specs contradicted by Amazon reviews.").
 
-                    FORMATTING & TONE:
-                    - "verdict": Professional executive summary (e.g. "High Risk: Arbitrage markers detected.").
-                    - "key_complaints": List of strings. "Feature: Technical failure" (e.g. "Battery: Density claims exceed physical limits").
-                    - "reviews_summary": Bullet points (•).
-                    - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullets. Perform a "Specification Audit".
+                    TASK 2: CROSS-REFERENCE CHECK
+                    - "detailed_technical_analysis": Compare the user's link vs. other sites. 
+                      (e.g. "Temu claims 4K, but Amazon listing B0XX for same item says 1080p.").
+                    - Explicitly name the other websites you found.
+
+                    TASK 3: REVIEW SOURCING
+                    - "reviews_summary": Bullet points summarizing consensus. You MUST cite the source (e.g. "Amazon: 3.5 stars...", "Reddit: Users warn...").
+                    - "key_complaints": "Feature: Specific failure" (e.g. "Battery: Dies in 20 mins").
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:20000]}
@@ -210,15 +208,12 @@ if analysis_trigger:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     prompt = f"""
                     I cannot access page. URL: {target_url}
-                    1. EXTRACT ID (ASIN/GoodsID).
-                    2. SEARCH Google for ID + "Review" + "Teardown".
+                    1. EXTRACT ID. 2. SEARCH Google for ID + "Review" + "Reddit" + "AliExpress".
                     
-                    CITATION RULE:
-                    - Explicitly cite external sources when referencing specs not visible in the URL slug.
-
-                    FORMATTING:
-                    - Tone: Forensic Analyst.
-                    - "key_complaints": "Feature: Specific failure."
+                    OUTPUT REQUIREMENTS:
+                    - "verdict": SHORT & PUNCHY (Max 15 words).
+                    - "reviews_summary": Cite sources (e.g. "Reddit says...", "Amazon says...").
+                    - "detailed_technical_analysis": COMPARE specs across sites (e.g. "AliExpress lists this for $5, confirming dropship markup").
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -232,23 +227,22 @@ if analysis_trigger:
                 status_box.write("👁️ Analyzing visual evidence...")
                 
                 prompt = """
-                YOU ARE A FORENSIC PRODUCT ANALYST.
+                YOU ARE A FORENSIC ANALYST.
                 
-                1. IDENTIFY (AGGRESSIVE): 
-                   - Read EVERY text label on the device.
-                   - If no brand is visible, describe the device visually (e.g. "Black Night Vision Monocular").
-                   - Your 'product_name' MUST NOT be 'Unknown'. Make a specific, educated guess.
+                1. IDENTIFY: Read text. Search Google for "product name reviews" + "AliExpress" + "Amazon".
+                
+                2. VERDICT (CRITICAL): 
+                   - Must be SHORT and PUNCHY (Max 15 words). 
+                   - Example: "SCAM ALERT: $10 item selling for $50 with fake 4K claims."
 
-                2. CITATION RULE (CRITICAL): 
-                   - The user provided a screenshot.
-                   - If you find "4K" or "1080p" claims on OTHER websites (like AliExpress), you MUST say: "External market listings claim..." or "Generic variants are marketed as...".
-                   - Do NOT attribute claims to the screenshot unless the text is visible in the image.
+                3. CROSS-REFERENCE ANALYSIS:
+                   - In "detailed_technical_analysis", COMPARE the screenshot to external findings.
+                   - "Screenshot shows '4K', but external Amazon listing (Model XYZ) confirms it is only 720p."
+                   - "Identical image found on AliExpress for $3.50."
 
-                3. FORMATTING & TONE:
-                   - "verdict": Professional executive summary.
-                   - "key_complaints": "Feature: Specific technical failure" (e.g., "Optics: Sensor resolution is upscaled VGA, not native 4K.").
-                   - "reviews_summary": Sophisticated consensus report using BULLET POINTS (•).
-                   - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullets.
+                4. REVIEWS:
+                   - "reviews_summary": Bullet points. CITE SOURCES (e.g. "YouTube review by [Channel] says...").
+                   - "key_complaints": "Feature: Specific technical failure".
 
                 Return JSON keys: 
                 "product_name", "score", "verdict", "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
@@ -298,6 +292,7 @@ if analysis_trigger:
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
+        # Display the SHORT verdict here
         st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Done')}</h3>", unsafe_allow_html=True)
         
         with st.expander("ℹ️ Why is this score different on other sites?"):
