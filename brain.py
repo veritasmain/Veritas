@@ -198,23 +198,23 @@ if analysis_trigger:
                     prompt = f"""
                     You are Veritas. Analyze this product.
                     
-                    SCORING RULES (MULTIPLES OF 5 ONLY):
-                    - 0-25: TOTAL SCAM.
-                    - 30-50: POOR VALUE (Generic dropshipping junk).
-                    - 55-75: DECENT.
+                    STRICT SCORING RULES (MULTIPLES OF 5 ONLY):
+                    - 0-25: SCAM / DANGEROUS / FAKE ITEM.
+                    - 30-45: SIGNIFICANT ISSUES. (If reviews say "Trash", "Broken", or "Features don't work", MAX SCORE IS 45. DO NOT GIVE 60+).
+                    - 50-75: DECENT / AVERAGE.
                     - 80-100: EXCELLENT.
 
                     TASK 1: SHORT VERDICT
                     - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
 
-                    TASK 2: MARKET COMPARISON (CRITICAL - NO EXACT PRICES)
-                    - "detailed_technical_analysis": MUST be a JSON OBJECT. Keys are HEADERS, Values are LISTS of bullet points.
-                    - DO NOT guess specific prices (e.g. "$14.50").
-                    - USE RELATIVE TERMS: "Found for ~50% less on AliExpress", "Similar price to competitors", "Significantly more expensive than average".
+                    TASK 2: MARKET COMPARISON
+                    - "detailed_technical_analysis": JSON OBJECT (Headers -> Bullets).
+                    - PRICE: Use relative terms ("Cheaper", "Similar"). No exact prices.
+                    - SPECS: Do NOT guess. If specs differ, say "Not as advertised on verified sources".
 
                     TASK 3: REVIEW SOURCING
-                    - "reviews_summary": LIST of strings. Each string must be a full sentence citing a source.
-                    - "key_complaints": LIST of strings. "Feature: Specific failure" (e.g. "Battery: Dies in 20 mins").
+                    - "reviews_summary": LIST of strings. Full sentences citing sources.
+                    - "key_complaints": LIST of strings. "Feature: Specific failure".
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:20000]}
@@ -226,15 +226,15 @@ if analysis_trigger:
                     I cannot access page. URL: {target_url}
                     1. EXTRACT ID. 2. SEARCH Google for ID + "Review" + "Reddit" + "AliExpress".
                     
-                    SCORING RULES (MULTIPLES OF 5 ONLY):
-                    - 0-25: TOTAL SCAM.
-                    - 30-50: DROPSHIPPING / LOW QUALITY.
+                    STRICT SCORING (MULTIPLES OF 5 ONLY):
+                    - 0-25: SCAM.
+                    - 30-45: TRASH / BROKEN (Max score 45 if functional issues exist).
                     
                     OUTPUT REQUIREMENTS:
                     - "verdict": SHORT & PUNCHY (Max 15 words).
                     - "reviews_summary": LIST of strings. Detailed summaries per source.
-                    - "detailed_technical_analysis": JSON OBJECT. Keys = Headers, Values = List of strings.
-                    - PRICE RULE: Use terms like "Cheaper", "Similar", "Markup detected". No exact currency.
+                    - "detailed_technical_analysis": JSON OBJECT.
+                    - SPECS: Say "Not as advertised on verified sources" if conflicting.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -251,23 +251,21 @@ if analysis_trigger:
                 YOU ARE A FORENSIC ANALYST.
                 
                 STEP 1: IDENTIFY & SEARCH
-                - Extract text from the image (Brand, Model, Specs).
-                - SEARCH Google for this item on: Amazon, AliExpress, and Reddit.
-                - IGNORE the screenshot's claims until verified against these external searches.
+                - Extract text from the image. SEARCH Google for this item on Amazon/Reddit.
                 
-                STEP 2: SCORING (MULTIPLES OF 5 ONLY):
-                   - 0-25: SCAM/FAKE (Image matches a known scam product).
-                   - 30-55: POOR VALUE (Found identical item elsewhere for much less).
-                   - 60-100: LEGIT (Product matches reputable listings).
+                STEP 2: STRICT SCORING (MULTIPLES OF 5 ONLY):
+                   - 0-25: SCAM (Fake item/Dangerous).
+                   - 30-45: FAILED PRODUCT (If reviews mention "trash", "broken", or "doesn't work", MAX SCORE IS 45).
+                   - 50-75: AVERAGE (Works as intended).
+                   - 80-100: EXCELLENT.
 
                 STEP 3: VERDICT
                    - SHORT and PUNCHY (Max 15 words).
 
                 STEP 4: CROSS-REFERENCE ANALYSIS (STRUCTURED JSON)
-                   - "detailed_technical_analysis": Return a JSON OBJECT.
-                   - Keys are Headers (e.g. "Price Arbitrage Check", "Spec Verification").
-                   - Values are LISTS of bullet points.
-                   - PRICE RULE: DO NOT use specific prices (e.g. "$12.99"). Use RELATIVE terms: "Cheaper on AliExpress", "Markup of approx 200% detected", "Price is consistent with market".
+                   - "detailed_technical_analysis": JSON OBJECT (Headers -> Bullets).
+                   - PRICE: Use relative terms ("Cheaper elsewhere", "Markup detected").
+                   - SPECS: Do NOT guess (e.g. "Likely 720p"). Instead say: "Not as advertised on verified sources" or "Discrepancy detected".
 
                 STEP 5: REVIEWS
                    - "reviews_summary": LIST of strings. Detailed 2-3 sentence summaries per source.
