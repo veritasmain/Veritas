@@ -189,15 +189,14 @@ if analysis_trigger:
                     You are Veritas. Analyze this product.
                     
                     TASK 1: SHORT VERDICT
-                    - "verdict": SHORT and PUNCHY (Max 15 words). Headline style. (e.g. "HIGH RISK: Fake specs contradicted by Amazon reviews.").
+                    - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
 
-                    TASK 2: CROSS-REFERENCE CHECK
-                    - "detailed_technical_analysis": Compare the user's link vs. other sites. 
-                      (e.g. "Temu claims 4K, but Amazon listing B0XX for same item says 1080p.").
-                    - Explicitly name the other websites you found.
+                    TASK 2: DETAILED ANALYSIS
+                    - "detailed_technical_analysis": Use MARKDOWN HEADERS (###) for categories. Under each header, use BULLET POINTS ONLY for specific comparisons (e.g. "Temu claims 4K, Amazon B0XX says 1080p").
+                    - Explicitly name other websites found.
 
                     TASK 3: REVIEW SOURCING
-                    - "reviews_summary": Bullet points summarizing consensus. You MUST cite the source (e.g. "Amazon: 3.5 stars...", "Reddit: Users warn...").
+                    - "reviews_summary": Provide a DETAILED summary (2-3 sentences per source). Cite the source explicitly (e.g. "Amazon Reviews: [Summary]", "Reddit Threads: [Summary]").
                     - "key_complaints": "Feature: Specific failure" (e.g. "Battery: Dies in 20 mins").
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
@@ -208,12 +207,12 @@ if analysis_trigger:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     prompt = f"""
                     I cannot access page. URL: {target_url}
-                    1. EXTRACT ID. 2. SEARCH Google for ID + "Review" + "Reddit" + "AliExpress".
+                    1. EXTRACT ID. 2. SEARCH Google for ID + "Review" + "Reddit".
                     
                     OUTPUT REQUIREMENTS:
                     - "verdict": SHORT & PUNCHY (Max 15 words).
-                    - "reviews_summary": Cite sources (e.g. "Reddit says...", "Amazon says...").
-                    - "detailed_technical_analysis": COMPARE specs across sites (e.g. "AliExpress lists this for $5, confirming dropship markup").
+                    - "reviews_summary": Detailed 2-3 sentence summaries per source. Cite sources.
+                    - "detailed_technical_analysis": Use MARKDOWN HEADERS and BULLET POINTS. No block text.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -229,19 +228,16 @@ if analysis_trigger:
                 prompt = """
                 YOU ARE A FORENSIC ANALYST.
                 
-                1. IDENTIFY: Read text. Search Google for "product name reviews" + "AliExpress" + "Amazon".
+                1. IDENTIFY: Read text. Search Google for "product name reviews".
                 
-                2. VERDICT (CRITICAL): 
-                   - Must be SHORT and PUNCHY (Max 15 words). 
-                   - Example: "SCAM ALERT: $10 item selling for $50 with fake 4K claims."
+                2. VERDICT: SHORT and PUNCHY (Max 15 words).
 
                 3. CROSS-REFERENCE ANALYSIS:
-                   - In "detailed_technical_analysis", COMPARE the screenshot to external findings.
-                   - "Screenshot shows '4K', but external Amazon listing (Model XYZ) confirms it is only 720p."
-                   - "Identical image found on AliExpress for $3.50."
+                   - In "detailed_technical_analysis": Use MARKDOWN HEADERS (###). Under each header, use BULLET POINTS ONLY.
+                   - Compare screenshot claims vs external reality. "Screenshot shows '4K', but external Amazon listing (Model XYZ) confirms it is only 720p."
 
                 4. REVIEWS:
-                   - "reviews_summary": Bullet points. CITE SOURCES (e.g. "YouTube review by [Channel] says...").
+                   - "reviews_summary": Detailed 2-3 sentence summaries per source (e.g. "YouTube [Channel]: The reviewer demonstrated that...").
                    - "key_complaints": "Feature: Specific technical failure".
 
                 Return JSON keys: 
@@ -292,7 +288,6 @@ if analysis_trigger:
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}</h1>", unsafe_allow_html=True)
-        # Display the SHORT verdict here
         st.markdown(f"<h3 style='text-align: center;'>{result.get('verdict', 'Done')}</h3>", unsafe_allow_html=True)
         
         with st.expander("ℹ️ Why is this score different on other sites?"):
@@ -316,7 +311,7 @@ if analysis_trigger:
         summary_text = result.get("reviews_summary", "No reviews found.")
         
         if isinstance(summary_text, list):
-            summary_text = "\n".join(summary_text)
+            summary_text = "\n\n".join(summary_text) # Join with double newline for paragraphs
         elif not isinstance(summary_text, str):
             summary_text = str(summary_text)
             
