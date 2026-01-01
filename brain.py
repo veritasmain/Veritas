@@ -21,6 +21,7 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "playback_data" not in st.session_state:
     st.session_state.playback_data = None
+# FIX: Counter for key rotation (prevents file uploader crash)
 if "uploader_id" not in st.session_state:
     st.session_state.uploader_id = 0
 
@@ -30,6 +31,7 @@ def clear_url_input():
     st.session_state.playback_data = None 
 
 def clear_img_input():
+    # FIX: Increment ID to force a fresh file uploader widget
     st.session_state.uploader_id += 1
     st.session_state.playback_data = None
 
@@ -131,6 +133,7 @@ if not st.session_state.playback_data:
             st.button("New Link", type="secondary", use_container_width=True, on_click=clear_url_input)
             
     with tab2:
+        # Dynamic key based on uploader_id to prevent Streamlit crashes
         current_key = f"uploader_{st.session_state.uploader_id}"
         uploaded_file = st.file_uploader("Upload Screenshot", type=["png", "jpg", "jpeg"], key=current_key)
         
@@ -186,16 +189,18 @@ if analysis_trigger:
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
 
                     prompt = f"""
-                    Analyze this product.
+                    You are Veritas, a Senior Product Forensic Analyst. 
+                    Analyze this product listing with high technical scrutiny.
                     
                     CITATION RULE:
-                    - If you find specs (e.g. "4K") on *external* sites (like AliExpress) that are NOT in the text provided, YOU MUST STATE: "External listings claim..." or "Other sellers advertise...". 
+                    - If you find specs (e.g., "4K", "Titanium") on *external* sites (like AliExpress) that are NOT in the text provided, YOU MUST STATE: "External listings claim..." or "Cross-reference data indicates...". 
                     - Do NOT imply the user's link claims it unless it's in the text.
 
-                    FORMATTING:
-                    - "key_complaints": List of strings. "Feature: Specific details".
-                    - "reviews_summary": Bullet points.
-                    - "detailed_technical_analysis": Headers and bullets.
+                    FORMATTING & TONE:
+                    - "verdict": Professional executive summary (e.g. "High Risk: Arbitrage markers detected.").
+                    - "key_complaints": List of strings. "Feature: Technical failure" (e.g. "Battery: Density claims exceed physical limits").
+                    - "reviews_summary": Bullet points (•).
+                    - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullets. Perform a "Specification Audit".
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:20000]}
@@ -205,10 +210,15 @@ if analysis_trigger:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     prompt = f"""
                     I cannot access page. URL: {target_url}
-                    1. EXTRACT ID. 2. SEARCH Google.
+                    1. EXTRACT ID (ASIN/GoodsID).
+                    2. SEARCH Google for ID + "Review" + "Teardown".
                     
                     CITATION RULE:
-                    - If you find specs (e.g. "4K") on *external* sites, state: "External listings claim...".
+                    - Explicitly cite external sources when referencing specs not visible in the URL slug.
+
+                    FORMATTING:
+                    - Tone: Forensic Analyst.
+                    - "key_complaints": "Feature: Specific failure."
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -222,18 +232,23 @@ if analysis_trigger:
                 status_box.write("👁️ Analyzing visual evidence...")
                 
                 prompt = """
-                YOU ARE A FORENSIC ANALYST.
+                YOU ARE A FORENSIC PRODUCT ANALYST.
                 
-                1. IDENTIFY: Read text. Search Google for "product name reviews".
-                
-                2. CITATION RULE (CRITICAL): 
-                   - The user has provided a screenshot.
-                   - If you find "4K" or "1080p" claims on OTHER websites (like AliExpress matches), you MUST say: "Found on external listings: 4K claim" or "Generic versions of this sell as 4K".
-                   - Do NOT say "The product claims 4K" if it's not in the screenshot text. Be precise about the source.
+                1. IDENTIFY (AGGRESSIVE): 
+                   - Read EVERY text label on the device.
+                   - If no brand is visible, describe the device visually (e.g. "Black Night Vision Monocular").
+                   - Your 'product_name' MUST NOT be 'Unknown'. Make a specific, educated guess.
 
-                3. FORMATTING:
-                   - "key_complaints": List of strings. "Feature: Specific failure".
-                   - "reviews_summary": Bullet points.
+                2. CITATION RULE (CRITICAL): 
+                   - The user provided a screenshot.
+                   - If you find "4K" or "1080p" claims on OTHER websites (like AliExpress), you MUST say: "External market listings claim..." or "Generic variants are marketed as...".
+                   - Do NOT attribute claims to the screenshot unless the text is visible in the image.
+
+                3. FORMATTING & TONE:
+                   - "verdict": Professional executive summary.
+                   - "key_complaints": "Feature: Specific technical failure" (e.g., "Optics: Sensor resolution is upscaled VGA, not native 4K.").
+                   - "reviews_summary": Sophisticated consensus report using BULLET POINTS (•).
+                   - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullets.
 
                 Return JSON keys: 
                 "product_name", "score", "verdict", "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
@@ -299,12 +314,11 @@ if analysis_trigger:
     with t2:
         st.subheader("Consensus")
         if result.get("key_complaints"):
-            st.error("🚨 Key Issues:")
+            st.error("🚨 Critical Failure Points:")
             for c in result.get("key_complaints", []): st.markdown(f"**-** {c}")
         
-        # --- FIXED FORMATTING FOR BLUE BOX ---
+        # Formatted blue box (vertical bullets)
         summary_text = result.get("reviews_summary", "No reviews found.")
-        # This replaces any bullet points with a double newline to force vertical stacking
         formatted_summary = summary_text.replace("•", "\n\n•").replace("- ", "\n- ")
         st.info(formatted_summary)
 
