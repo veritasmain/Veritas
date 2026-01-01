@@ -128,6 +128,25 @@ def get_standardized_verdict(score):
     else:
         return "🌟 EXCELLENT: TOP TIER AUTHENTIC"
 
+def detect_category_from_url(url):
+    """
+    Detects the product category from the URL text to prevent hallucinations.
+    """
+    url_lower = url.lower()
+    
+    if any(x in url_lower for x in ['drone', 'quadcopter', 'uav', 'fly', 'aircraft']):
+        return "DRONE / QUADCOPTER"
+    if any(x in url_lower for x in ['projector', 'cinema', '1080p', '4k', 'lumen']):
+        return "PROJECTOR"
+    if any(x in url_lower for x in ['watch', 'smartwatch', 'band', 'bracelet']):
+        return "SMARTWATCH"
+    if any(x in url_lower for x in ['earbud', 'headphone', 'tws', 'audio', 'sound']):
+        return "AUDIO DEVICE"
+    if any(x in url_lower for x in ['vacuum', 'cleaner', 'mop', 'robot']):
+        return "ROBOT VACUUM"
+        
+    return "UNKNOWN ELECTRONICS"
+
 def extract_name_from_url(url):
     try:
         path = urlparse(url).path
@@ -214,13 +233,12 @@ if analysis_trigger:
     score = 35 
     product_image_url = None
     
-    # CASE 1: PLAYBACK (Fix applied here)
+    # CASE 1: PLAYBACK
     if analysis_trigger == "playback":
         data = st.session_state.playback_data
         result = data['result']
         score = extract_score_safely(result)
-        # --- FIX: Ensure verdict is calculated on playback ---
-        standardized_verdict = get_standardized_verdict(score) 
+        standardized_verdict = get_standardized_verdict(score)
         st.success(f"📂 Loaded from History: {data['source']}")
 
     # CASE 2: NEW ANALYSIS
@@ -258,6 +276,9 @@ if analysis_trigger:
             if analysis_trigger == "link" and target_url:
                 
                 fallback_name = extract_name_from_url(target_url)
+                # DETECT CATEGORY FROM URL TO PREVENT HALLUCINATIONS
+                detected_category = detect_category_from_url(target_url)
+                
                 is_hostile = "aliexpress" in target_url.lower() or "temu" in target_url.lower()
                 
                 scraped_data = None
@@ -292,6 +313,9 @@ if analysis_trigger:
                     You are Veritas.
                     {consistency_rules}
                     
+                    CONTEXT HINT: The URL suggests this item is a: {detected_category}. 
+                    IF your analysis finds "Smart Glasses" or "Vacuum" but the Hint is "DRONE", TRUST THE HINT.
+                    
                     TASK:
                     1. Extract Exact "product_name" (Max 5 words).
                     2. Apply Scoring Grid.
@@ -320,6 +344,7 @@ if analysis_trigger:
                     prompt = f"""
                     I cannot access page directly. 
                     Target: {fallback_name}
+                    DETECTED CATEGORY: {detected_category} (Trust this category!)
                     
                     MANDATORY: SEARCH for "{search_query_1}" AND "{search_query_2}".
                     
@@ -408,7 +433,7 @@ if analysis_trigger:
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
         st.markdown(f"<h1 style='text-align: center; color: {color}; font-size: 80px;'>{score}<span style='font-size: 40px; color: grey;'>/100</span></h1>", unsafe_allow_html=True)
-        # Safe access for variable that might not be defined in old history
+        # Safe access for variable
         verdict_text = locals().get('standardized_verdict', result.get('verdict', 'Analysis Complete'))
         st.markdown(f"<h3 style='text-align: center;'>{verdict_text}</h3>", unsafe_allow_html=True)
         
