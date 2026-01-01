@@ -62,12 +62,12 @@ with st.sidebar:
                     args=(item,)
                 )
             with col2:
+                # Default baseline is 35 (High Risk)
                 raw = item.get('score', 35)
                 score = int(raw)
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
                 st.write(f"{color} {score}")
             
-            # Safe caption access
             caption_text = item.get('standardized_verdict', item.get('verdict', 'Analysis'))
             st.caption(caption_text)
             st.divider()
@@ -130,7 +130,7 @@ def get_standardized_verdict(score):
 
 def detect_category_from_url(url):
     """
-    Detects the product category from the URL text to prevent hallucinations.
+    Forces the AI to stay on topic based on URL keywords.
     """
     url_lower = url.lower()
     
@@ -142,8 +142,6 @@ def detect_category_from_url(url):
         return "SMARTWATCH"
     if any(x in url_lower for x in ['earbud', 'headphone', 'tws', 'audio', 'sound']):
         return "AUDIO DEVICE"
-    if any(x in url_lower for x in ['vacuum', 'cleaner', 'mop', 'robot']):
-        return "ROBOT VACUUM"
         
     return "UNKNOWN ELECTRONICS"
 
@@ -238,7 +236,7 @@ if analysis_trigger:
         data = st.session_state.playback_data
         result = data['result']
         score = extract_score_safely(result)
-        standardized_verdict = get_standardized_verdict(score)
+        standardized_verdict = get_standardized_verdict(score) 
         st.success(f"📂 Loaded from History: {data['source']}")
 
     # CASE 2: NEW ANALYSIS
@@ -313,7 +311,7 @@ if analysis_trigger:
                     You are Veritas.
                     {consistency_rules}
                     
-                    CONTEXT HINT: The URL suggests this item is a: {detected_category}. 
+                    CRITICAL CONTEXT: The URL suggests this item is a: {detected_category}. 
                     IF your analysis finds "Smart Glasses" or "Vacuum" but the Hint is "DRONE", TRUST THE HINT.
                     
                     TASK:
@@ -341,10 +339,15 @@ if analysis_trigger:
                     search_query_1 = f"{fallback_name} reviews"
                     search_query_2 = f"{fallback_name} real vs fake"
                     
+                    # Force "Drone" into the prompt if detected
+                    context_injection = ""
+                    if detected_category != "UNKNOWN ELECTRONICS":
+                        context_injection = f"THIS IS A {detected_category}. Focus search on {detected_category} reviews."
+                    
                     prompt = f"""
                     I cannot access page directly. 
                     Target: {fallback_name}
-                    DETECTED CATEGORY: {detected_category} (Trust this category!)
+                    {context_injection}
                     
                     MANDATORY: SEARCH for "{search_query_1}" AND "{search_query_2}".
                     
