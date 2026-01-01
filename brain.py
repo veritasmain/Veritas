@@ -7,6 +7,7 @@ import re
 import traceback
 import os
 import time
+from urllib.parse import urlparse
 from io import BytesIO
 
 # --- PAGE CONFIGURATION ---
@@ -58,7 +59,7 @@ with st.sidebar:
                 )
             with col2:
                 raw = item.get('score', 0)
-                score = int(raw) if isinstance(raw, (int, float)) else 0
+                score = int(raw) if isinstance(raw, (int, float)) else 50
                 color = "🔴" if score <= 45 else "🟠" if score < 80 else "🟢"
                 st.write(f"{color} {score}")
             st.caption(f"{item.get('standardized_verdict', item['verdict'])}")
@@ -97,13 +98,16 @@ def clean_and_parse_json(response_text):
 
 def extract_score_safely(result_dict):
     raw = result_dict.get("score")
-    score = 0 
+    # Default to 50 (Unknown) instead of 0 (Scam) if scoring fails
+    score = 50 
+    
     if isinstance(raw, (int, float)):
         score = int(raw)
     elif isinstance(raw, str):
         nums = re.findall(r'\d+', raw)
         if nums:
             score = int(nums[0])
+            
     return max(0, min(100, 5 * round(score / 5)))
 
 def get_standardized_verdict(score):
@@ -119,6 +123,10 @@ def get_standardized_verdict(score):
         return "🌟 EXCELLENT: TOP TIER AUTHENTIC"
 
 def extract_id_from_url(url):
+    """
+    Robust extraction: Tries ID first, falls back to URL text (slug) if ID is missing.
+    """
+    # 1. Try explicit IDs
     ali_match = re.search(r'/item/(\d+)\.html', url)
     if ali_match: return f"AliExpress Item {ali_match.group(1)}"
     
@@ -128,7 +136,21 @@ def extract_id_from_url(url):
     temu_match = re.search(r'goods_id=(\d+)', url)
     if temu_match: return f"Temu Item {temu_match.group(1)}"
 
-    return "Unidentified Link"
+    # 2. Fallback: Extract words from the URL path (The "Slug")
+    try:
+        path = urlparse(url).path
+        # Split by '/' and take the last non-empty segment that isn't just numbers
+        segments = [s for s in path.split('/') if s and not s.isdigit()]
+        if segments:
+            # Take the longest segment as it likely contains the product name
+            best_segment = max(segments, key=len)
+            # Clean it up (remove dashes)
+            clean_name = best_segment.replace('-', ' ').replace('_', ' ')
+            return clean_name
+    except:
+        pass
+
+    return "Unidentified Product"
 
 # --- SCRAPING ---
 @st.cache_data(ttl="24h", show_spinner=False)
@@ -198,13 +220,15 @@ if analysis_trigger:
             if analysis_trigger == "link" and target_url:
                 
                 fallback_name = extract_id_from_url(target_url)
+                
+                # Hostile Site Check
                 is_hostile = "aliexpress" in target_url.lower() or "temu" in target_url.lower()
                 
                 scraped_data = None
                 scrape_error = True 
                 content = ""
                 
-                # Try direct scrape only if not hostile
+                # Only try scraping if not hostile
                 if not is_hostile:
                     MAX_RETRIES = 3
                     for attempt in range(MAX_RETRIES):
@@ -224,7 +248,7 @@ if analysis_trigger:
                         except:
                             pass
                 
-                # Primary Analysis (If Scrape Success)
+                # 1. Primary Analysis (If Scrape Success)
                 if not scrape_error and scraped_data:
                     meta = getattr(scraped_data, 'metadata', {})
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
@@ -233,19 +257,20 @@ if analysis_trigger:
                     You are Veritas. Analyze this product.
                     
                     CONSISTENCY ANCHOR:
-                    - **Generic/Unbranded Electronics:** BASE SCORE = 40.
-                    - **PRICE REALITY CHECK:** If item claims "Pro/4K/High-End" features but price is < $50 -> MAX SCORE = 45.
+                    - **Generic/Unbranded:** BASE SCORE = 40.
+                    - **Known Brand:** BASE SCORE = 80.
+                    - **Impossible Price:** (e.g. 4K Drone for $20) -> MAX SCORE = 40.
                     
                     STRICT SCORING:
-                    - 0-25: SCAM / FAKE.
+                    - 0-25: SCAM / DANGEROUS.
                     - 30-45: MISLEADING / LOW QUALITY.
                     - 50-65: MEDIOCRE.
                     - 70-85: GOOD.
                     
                     TASK:
                     1. Extract Exact "product_name".
-                    2. Analyze Reviews/Complaints.
-                    3. JSON Output with Title Case keys.
+                    2. Analyze Reviews.
+                    3. JSON Output (Title Case Keys).
 
                     Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:25000]}
@@ -263,23 +288,24 @@ if analysis_trigger:
                     else:
                         result = temp_result
 
-                # Backup Deep Search (If Scrape Failed OR Hostile)
+                # 2. Backup Deep Search (If Scrape Failed OR Hostile)
                 if scrape_error or not result:
                     search_query_1 = f"{fallback_name} reviews reddit problems"
-                    search_query_2 = f"{fallback_name} vs real brands"
+                    search_query_2 = f"{fallback_name} specs vs reality"
                     
                     prompt = f"""
-                    I cannot access page directly. 
-                    Target ID: {fallback_name} (from URL: {target_url})
+                    I cannot access the page directly. 
+                    Target Identifier: {fallback_name} (derived from URL: {target_url})
                     
                     MANDATORY: SEARCH for "{search_query_1}" AND "{search_query_2}".
                     
-                    CONSISTENCY ANCHOR:
-                    - **Generic/Cheap Electronics:** BASE SCORE = 40. 
-                    - **PRICE REALITY CHECK:** If finding results for "Cheap Drone" or "Knockoff", MAX SCORE = 40.
+                    SCORING RULES:
+                    - **If NO info found:** Return Score 50 (Neutral/Unverified). DO NOT RETURN 0.
+                    - **If SCAM confirmed:** Return Score 10.
+                    - **Generic Cheap Item:** Score 40.
                     
                     OUTPUT:
-                    - "product_name": EXTRACT THE REAL COMMERCIAL NAME (e.g. 'Lenovo LP40', 'S116 Drone'). Do NOT use the ID.
+                    - "product_name": EXTRACT REAL NAME.
                     - "detailed_technical_analysis": JSON OBJECT (Title Case Keys).
 
                     Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
@@ -301,8 +327,8 @@ if analysis_trigger:
                 STEP 3: COMPARE Screenshot claims vs Real World data.
                 
                 CONSISTENCY ANCHOR:
-                - **PRICE REALITY CHECK:** If image shows "Pro" features but it's a known budget item -> MAX SCORE = 45.
-                - **Generic/No-Name:** BASE SCORE = 40.
+                - **Impossible Specs:** (e.g. 16TB SSD for $20) -> SCORE < 30.
+                - **Generic:** Score 40.
 
                 RETURN JSON:
                 {
@@ -324,15 +350,14 @@ if analysis_trigger:
             score = extract_score_safely(result)
             standardized_verdict = get_standardized_verdict(score)
             
-            # --- FINAL NAME LOGIC (Crucial Fix) ---
-            # 1. Start with what the AI found
+            # --- FINAL NAME LOGIC ---
             ai_name = result.get("product_name", "Unknown")
-            
-            # 2. If AI failed (Unknown/Generic), fall back to the ID
-            if ai_name in ["Unknown", "N/A", "Unidentified Item", "Generic", "Product Page"] and 'fallback_name' in locals():
-                 final_name = fallback_name
+            if ai_name in ["Unknown", "N/A", "Unidentified Item", "Generic", "Product Page"]:
+                 if 'fallback_name' in locals() and fallback_name != "Unidentified Product":
+                     final_name = fallback_name
+                 else:
+                     final_name = "Unidentified Item"
             else:
-                 # 3. If AI found a name, USE IT. Do not revert to ID.
                  final_name = ai_name
 
             st.session_state.history.append({
