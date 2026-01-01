@@ -186,12 +186,16 @@ if analysis_trigger:
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
 
                     prompt = f"""
-                    Analyze this product text.
+                    Analyze this product.
                     
-                    FORMAT REQUIREMENTS:
-                    - "key_complaints": List of strings. Format as "Feature: Specific details" (e.g. "Battery: Dies in 20 mins, claims 4 hours").
-                    - "reviews_summary": A single string using BULLET POINTS (•) to separate Pros, Cons, and Verdict.
-                    - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullet points to organize by Build Quality, Specs Reality, and Value.
+                    CITATION RULE:
+                    - If you find specs (e.g. "4K") on *external* sites (like AliExpress) that are NOT in the text provided, YOU MUST STATE: "External listings claim..." or "Other sellers advertise...". 
+                    - Do NOT imply the user's link claims it unless it's in the text.
+
+                    FORMATTING:
+                    - "key_complaints": List of strings. "Feature: Specific details".
+                    - "reviews_summary": Bullet points.
+                    - "detailed_technical_analysis": Headers and bullets.
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:20000]}
@@ -201,13 +205,10 @@ if analysis_trigger:
                     status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
                     prompt = f"""
                     I cannot access page. URL: {target_url}
-                    1. EXTRACT ID (ASIN/GoodsID).
-                    2. SEARCH Google for ID + "Review".
+                    1. EXTRACT ID. 2. SEARCH Google.
                     
-                    FORMAT REQUIREMENTS:
-                    - "key_complaints": List of strings. "Feature: Specific details".
-                    - "reviews_summary": String with BULLET POINTS (•) for Pros/Cons/Verdict.
-                    - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullets.
+                    CITATION RULE:
+                    - If you find specs (e.g. "4K") on *external* sites, state: "External listings claim...".
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -223,14 +224,16 @@ if analysis_trigger:
                 prompt = """
                 YOU ARE A FORENSIC ANALYST.
                 
-                1. IDENTIFY & SEARCH: Read text on device, search Google for real reviews.
+                1. IDENTIFY: Read text. Search Google for "product name reviews".
                 
-                2. SCORING (0-100): Start at 80. Deduct for dropshipping matches or fake specs.
+                2. CITATION RULE (CRITICAL): 
+                   - The user has provided a screenshot.
+                   - If you find "4K" or "1080p" claims on OTHER websites (like AliExpress matches), you MUST say: "Found on external listings: 4K claim" or "Generic versions of this sell as 4K".
+                   - Do NOT say "The product claims 4K" if it's not in the screenshot text. Be precise about the source.
 
-                3. OUTPUT FORMATTING (CRITICAL):
-                   - "key_complaints": List of strings. Format: "Feature: Specific failure" (e.g. "Focus: Ring is loose and blurry").
-                   - "reviews_summary": A single string using BULLET POINTS (•) to summarize the consensus.
-                   - "detailed_technical_analysis": Use MARKDOWN headers (###) and bullets to organize the deep dive.
+                3. FORMATTING:
+                   - "key_complaints": List of strings. "Feature: Specific failure".
+                   - "reviews_summary": Bullet points.
 
                 Return JSON keys: 
                 "product_name", "score", "verdict", "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
@@ -299,8 +302,11 @@ if analysis_trigger:
             st.error("🚨 Key Issues:")
             for c in result.get("key_complaints", []): st.markdown(f"**-** {c}")
         
-        # New Formatting for the Blue Box
-        st.info(result.get("reviews_summary", "No reviews found."))
+        # --- FIXED FORMATTING FOR BLUE BOX ---
+        summary_text = result.get("reviews_summary", "No reviews found.")
+        # This replaces any bullet points with a double newline to force vertical stacking
+        formatted_summary = summary_text.replace("•", "\n\n•").replace("- ", "\n- ")
+        st.info(formatted_summary)
 
     with t3:
         st.subheader("Red Flags")
@@ -308,5 +314,4 @@ if analysis_trigger:
         
         st.divider()
         st.subheader("Technical Deep Dive")
-        # Markdown rendering for organized analysis
         st.markdown(result.get("detailed_technical_analysis", "N/A"))
