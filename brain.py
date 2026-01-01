@@ -96,10 +96,10 @@ def clean_and_parse_json(response_text):
 
 def extract_score_safely(result_dict):
     """
-    Extracts score and rounds it to the nearest multiple of 5.
+    Extracts score. Returns 0 if no score found (signals failure).
     """
     raw = result_dict.get("score")
-    score = 50 # Default
+    score = 0 # Default to 0 to trigger retry logic if needed
     
     if isinstance(raw, (int, float)):
         score = int(raw)
@@ -111,6 +111,18 @@ def extract_score_safely(result_dict):
     # Round to nearest 5
     score = 5 * round(score / 5)
     return max(0, min(100, score))
+
+def extract_id_from_url(url):
+    """Try to find an ASIN (Amazon) or Item ID (AliExpress/Temu) in the URL"""
+    # AliExpress ID pattern (numbers.html)
+    ali_match = re.search(r'/item/(\d+)\.html', url)
+    if ali_match: return f"AliExpress ID {ali_match.group(1)}"
+    
+    # Amazon ASIN pattern (B0...)
+    amz_match = re.search(r'/(dp|gp/product)/([A-Z0-9]{10})', url)
+    if amz_match: return f"Amazon ASIN {amz_match.group(2)}"
+    
+    return "Product ID Unknown"
 
 # --- SCRAPING ---
 @st.cache_data(ttl="24h", show_spinner=False)
@@ -180,6 +192,10 @@ if analysis_trigger:
             # === PATH A: LINK ===
             if analysis_trigger == "link" and target_url:
                 status_box.write("🌐 Scouting website...")
+                
+                # PRE-STEP: Extract ID immediately for consistent naming
+                extracted_id_name = extract_id_from_url(target_url)
+                
                 scraped_data = None
                 scrape_error = False
                 page_title_meta = ""
@@ -190,8 +206,14 @@ if analysis_trigger:
                     meta = getattr(scraped_data, 'metadata', {})
                     page_title_meta = meta.get('title', '')
                     
-                    # Amazon Trap Detection
-                    is_trap = len(str(content)) < 600 or "captcha" in str(content).lower() or "robot check" in str(content).lower()
+                    # Aggressive Trap Detection
+                    # If content is short OR contains "Login/Security/Captcha", assume blockage
+                    content_str = str(content).lower()
+                    is_trap = len(str(content)) < 800 or \
+                              "captcha" in content_str or \
+                              "robot check" in content_str or \
+                              "login" in content_str or \
+                              "security check" in content_str
                     
                     if is_trap: 
                         scrape_error = True
@@ -199,6 +221,7 @@ if analysis_trigger:
                 except: 
                     scrape_error = True
 
+                # --- TRY PATH A (DIRECT SCRAPE) ---
                 if not scrape_error and scraped_data:
                     status_box.write("🧠 Reading content...")
                     content = getattr(scraped_data, 'markdown', '')
@@ -210,37 +233,47 @@ if analysis_trigger:
                     
                     STRICT SCORING RULES (MULTIPLES OF 5 ONLY):
                     - 0-25: SCAM / DANGEROUS / FAKE ITEM.
-                    - 30-45: SIGNIFICANT ISSUES. (If reviews say "Trash", "Broken", or "Features don't work", MAX SCORE IS 45. DO NOT GIVE 60+).
+                    - 30-45: SIGNIFICANT ISSUES (Reviews say "Trash", "Broken", "Fake").
                     - 50-75: DECENT / AVERAGE.
                     - 80-100: EXCELLENT (Verified Authentic).
                     
                     **PLATFORM PENALTY CAP:**
                     - If Temu/AliExpress: Deduct MAX 10 POINTS.
-                    - Do not deduct more than 10 points solely for the website URL.
-
+                    
                     TASK 1: EXACT NAMING
-                    - "product_name": Use the exact Brand & Model found in the text. 
-                    - If the text is vague, use this Page Title: "{page_title_meta}"
+                    - "product_name": Use the exact Brand & Model.
+                    - IF YOU CANNOT FIND A PRODUCT NAME in the text, return "Unknown".
 
-                    TASK 2: SHORT VERDICT
-                    - "verdict": SHORT and PUNCHY (Max 15 words). Headline style.
-
-                    TASK 3: MARKET COMPARISON
-                    - "detailed_technical_analysis": JSON OBJECT (Headers -> Bullets).
-                    - PRICE: Use relative terms ("Cheaper", "Similar"). No exact prices.
-                    - SPECS: Do NOT guess. If specs differ, say "Not as advertised on verified sources".
-
-                    TASK 4: REVIEW SOURCING & SKEPTICISM
-                    - Assume 20% of positive reviews are fake. Look for specific complaints.
+                    TASK 2: REVIEW SOURCING
                     - "reviews_summary": LIST of strings. Full sentences citing sources.
-                    - "key_complaints": LIST of strings. MUST Attribute to reviews. Format: "Feature: Reviewers report X" (e.g. "Shipping: Users complain of fake tracking").
+                    - "key_complaints": LIST of strings. MUST Attribute to reviews (e.g. "Shipping: User reviews report fake tracking").
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
-                    Content: {str(content)[:20000]}
+                    Content: {str(content)[:25000]}
                     """
-                    response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
-                else:
-                    status_box.write("🛡️ Anti-bot detected. Switching to ID Investigation...")
+                    # Temperature 0 for consistency
+                    response = client.models.generate_content(
+                        model='gemini-2.0-flash', 
+                        contents=prompt,
+                        config={'temperature': 0.0}
+                    )
+                    
+                    # Check if Path A produced a valid result
+                    temp_result = clean_and_parse_json(response.text)
+                    temp_name = temp_result.get("product_name", "Unknown")
+                    
+                    # ZOMBIE CHECK: If the AI returns "Unknown" or generic nonsense, 
+                    # it means the scrape was actually garbage (a trap we missed).
+                    # Force the error to trigger Path B.
+                    if temp_name in ["Unknown", "N/A", "Product Page"] or temp_result.get("score") == 50:
+                         scrape_error = True
+                         status_box.write("⚠️ Scrape data invalid. Engaging Backup Search...")
+                    else:
+                        result = temp_result
+
+                # --- PATH B (BACKUP SEARCH) ---
+                if scrape_error or not result:
+                    status_box.write("🛡️ Anti-bot detected/Confirmed. Switching to ID Investigation...")
                     
                     prompt = f"""
                     I cannot access page directly (Scraper Blocked). URL: {target_url}
@@ -251,7 +284,7 @@ if analysis_trigger:
                     - 0-25: SCAM.
                     - 30-45: TRASH / BROKEN (Significant functional issues).
                     - 50-75: AVERAGE.
-                    - 80-85: EXCELLENT (CAPPED AT 85 because direct page verification failed).
+                    - 80-85: EXCELLENT (CAPPED AT 85).
                     
                     **PLATFORM PENALTY CAP:** Max 10 points deduction.
                     
@@ -259,15 +292,17 @@ if analysis_trigger:
                     - "product_name": EXACT BRAND & MODEL.
                     - "verdict": SHORT & PUNCHY (Max 15 words).
                     - "reviews_summary": LIST of strings. Detailed summaries per source.
-                    - "key_complaints": LIST of strings. MUST Attribute to reviews. Format: "Feature: User reported X".
+                    - "key_complaints": LIST of strings. MUST Attribute to reviews.
                     - "detailed_technical_analysis": JSON OBJECT (Headers -> Bullets).
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
                     response = client.models.generate_content(
-                        model='gemini-2.0-flash', contents=prompt,
-                        config={'tools': [{'google_search': {}}]}
+                        model='gemini-2.0-flash', 
+                        contents=prompt,
+                        config={'tools': [{'google_search': {}}], 'temperature': 0.0}
                     )
+                    result = clean_and_parse_json(response.text)
 
             # === PATH B: IMAGE ===
             elif analysis_trigger == "image" and uploaded_image:
@@ -278,12 +313,12 @@ if analysis_trigger:
                 
                 STEP 1: IDENTIFY & SEARCH
                 - Extract text from the image. SEARCH Google for this item on Amazon/Reddit.
-                - "product_name": EXTRACT EXACT BRAND & MODEL (e.g. "GTMEDIA N1"). Avoid generic names.
+                - "product_name": EXTRACT EXACT BRAND & MODEL.
                 
                 STEP 2: STRICT SCORING (MULTIPLES OF 5 ONLY):
                    - 0-25: SCAM (Fake item/Dangerous).
-                   - 30-45: FAILED PRODUCT (If reviews mention "trash", "broken", or "doesn't work", MAX SCORE IS 45).
-                   - 50-75: AVERAGE (Works as intended).
+                   - 30-45: FAILED PRODUCT.
+                   - 50-75: AVERAGE.
                    - 80-100: EXCELLENT.
                    
                 **PLATFORM PENALTY CAP:**
@@ -299,7 +334,7 @@ if analysis_trigger:
 
                 STEP 5: REVIEWS
                    - "reviews_summary": LIST of strings. Detailed 2-3 sentence summaries per source.
-                   - "key_complaints": LIST of strings. MUST Attribute to reviews. Format: "Feature: User reported X".
+                   - "key_complaints": LIST of strings. MUST Attribute to reviews.
 
                 Return JSON keys: 
                 "product_name", "score", "verdict", "red_flags", "reviews_summary", "key_complaints", "detailed_technical_analysis".
@@ -308,16 +343,20 @@ if analysis_trigger:
                 response = client.models.generate_content(
                     model='gemini-2.0-flash', 
                     contents=[prompt, uploaded_image],
-                    config={'tools': [{'google_search': {}}]} 
+                    config={'tools': [{'google_search': {}}], 'temperature': 0.0} 
                 )
+                result = clean_and_parse_json(response.text)
 
             # PARSE & SAVE
-            result = clean_and_parse_json(response.text)
             score = extract_score_safely(result)
             
+            # Name Consistency Logic
             final_name = result.get("product_name", "Unidentified Item")
             if final_name in ["Unknown", "N/A", "Unidentified Item"]:
-                 if 'page_title_meta' in locals() and page_title_meta:
+                 # Prefer extracted ID over "Generic"
+                 if 'extracted_id_name' in locals():
+                     final_name = extracted_id_name
+                 elif 'page_title_meta' in locals() and page_title_meta:
                      final_name = page_title_meta[:40] + "..."
                  else:
                      final_name = "Scanned Item (Generic)"
