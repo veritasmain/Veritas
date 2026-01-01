@@ -266,12 +266,12 @@ if analysis_trigger:
                         except:
                             pass
                 
-                # LOCKDOWN RULES FOR CONSISTENCY
+                # CONSISTENCY LOCKDOWN RULES
                 consistency_rules = """
                 CONSISTENCY LOCKDOWN:
-                1. **CATEGORY CAP:** If product is a Drone, Projector, or Smartwatch AND Unbranded/Generic -> MAX SCORE = 45. (Regardless of how nice the page looks).
-                2. **PRICE CHECK:** If features are "Pro" but price is < $50 -> MAX SCORE = 45.
-                3. **Known Brand (Sony/DJI):** BASE SCORE = 80.
+                1. **EQUALIZER:** Treat Amazon and AliExpress items IDENTICALLY. Do not give points for the "Amazon" platform.
+                2. **CATEGORY CAP:** If product is a Drone, Projector, or Smartwatch AND Unbranded/Generic -> MAX SCORE = 45.
+                3. **PRICE CHECK:** If features are "Pro/4K/GPS" but price is < $50 -> MAX SCORE = 45.
                 """
 
                 # 1. Primary Analysis
@@ -337,9 +337,7 @@ if analysis_trigger:
                 STEP 1: READ TEXT & IDENTIFY PRODUCT from image.
                 STEP 2: SEARCH GOOGLE for the identified product.
                 
-                CONSISTENCY LOCKDOWN:
-                1. **CATEGORY CAP:** Generic Drone/Projector -> MAX SCORE = 45.
-                2. **PRICE CHECK:** "Pro" specs for cheap price -> MAX SCORE = 45.
+                {consistency_rules}
 
                 RETURN JSON:
                 {{
@@ -365,7 +363,7 @@ if analysis_trigger:
             ai_name = result.get("product_name", "Unknown")
             clean_name = sanitize_product_name(ai_name)
             
-            # Fallback logic: If the AI returns garbage, use the URL extraction
+            # Fallback logic
             if clean_name == "Unidentified Item" and 'fallback_name' in locals() and fallback_name != "Unidentified Item":
                  final_name = fallback_name
             else:
