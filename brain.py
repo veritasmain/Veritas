@@ -187,6 +187,7 @@ if analysis_trigger:
                 
                 fallback_name = extract_id_from_url(target_url)
                 
+                # Smart Bypass Check
                 is_hostile = "aliexpress" in target_url.lower() or "temu" in target_url.lower()
                 
                 scraped_data = None
@@ -212,6 +213,7 @@ if analysis_trigger:
                         except:
                             pass
                 
+                # Primary Analysis (If Scrape Success)
                 if not scrape_error and scraped_data:
                     meta = getattr(scraped_data, 'metadata', {})
                     product_image_url = meta.get('og:image') if isinstance(meta, dict) else getattr(meta, 'og_image', None)
@@ -221,20 +223,20 @@ if analysis_trigger:
                     
                     STRICT SCORING PROTOCOL:
                     - 0-25: DANGEROUS / SCAM / FAKE ITEM.
-                    - 30-45: MISLEADING / LOW QUALITY.
+                    - 30-45: MISLEADING / LOW QUALITY. (If specs are fake e.g. "Fake 4K", MAX SCORE 45).
                     - 50-65: MEDIOCRE.
                     - 70-85: GOOD.
                     - 90-100: EXCELLENT.
                     
-                    TASK 1: EXACT NAMING
+                    LIAR'S PENALTY: False claims = Score < 25.
+
+                    TASK 1: NAMING
                     - "product_name": Use exact Brand & Model.
 
-                    TASK 2: REVIEWS
+                    TASK 2: REVIEWS & SPECS
                     - "reviews_summary": LIST of strings.
                     - "key_complaints": LIST of strings.
-
-                    TASK 3: TECHNICAL ANALYSIS (FORMATTING CRITICAL)
-                    - "detailed_technical_analysis": JSON OBJECT. Keys must be Human Readable Title Case (e.g. "Battery Life", not "battery_life"). Values must be Lists of Strings.
+                    - "detailed_technical_analysis": JSON OBJECT (Title Case Keys).
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:25000]}
@@ -253,23 +255,31 @@ if analysis_trigger:
                     else:
                         result = temp_result
 
-                # Backup Search
+                # Backup Deep Search (Forced)
                 if scrape_error or not result:
-                    prompt = f"""
-                    I cannot access page directly. URL: {target_url}
-                    1. EXTRACT ID/ASIN from URL.
-                    2. SEARCH Google for ID + "Review".
+                    # Construct specific query to force tool use
+                    search_query_1 = f"{fallback_name} reviews reddit"
+                    search_query_2 = f"{fallback_name} specs vs reality"
                     
-                    STRICT SCORING PROTOCOL:
+                    prompt = f"""
+                    I cannot access page directly. 
+                    Target: {fallback_name} (from URL: {target_url})
+                    
+                    MANDATORY INSTRUCTION:
+                    1. YOU MUST USE THE 'google_search' TOOL.
+                    2. SEARCH for: "{search_query_1}" AND "{search_query_2}"
+                    3. Do not return "Unknown". Use the search results to form a verdict.
+
+                    STRICT SCORING:
                     - 0-25: SCAM / FAKE.
                     - 30-45: MISLEADING / TRASH.
                     - 50-65: MEDIOCRE.
                     - 70-85: GOOD.
                     
                     OUTPUT REQUIREMENTS:
-                    - "product_name": EXACT BRAND & MODEL.
+                    - "product_name": Use the real Brand & Model found in search.
                     - "verdict": SHORT & PUNCHY.
-                    - "detailed_technical_analysis": JSON OBJECT. Keys must be Title Case (e.g. "Price Analysis").
+                    - "detailed_technical_analysis": JSON OBJECT (Title Case Keys).
 
                     Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -286,7 +296,7 @@ if analysis_trigger:
                 YOU ARE A FORENSIC ANALYST.
                 
                 STEP 1: READ TEXT & IDENTIFY PRODUCT from image.
-                STEP 2: SEARCH GOOGLE for the identified product to find reviews/price.
+                STEP 2: SEARCH GOOGLE for the identified product.
                 STEP 3: COMPARE Screenshot claims vs Real World data.
                 
                 STRICT SCORING PROTOCOL:
@@ -305,7 +315,6 @@ if analysis_trigger:
                     "detailed_technical_analysis": {"Price Check": ["..."], "Spec Verify": ["..."]}
                 }
                 """
-                # Relaxed temperature for vision to prevent 0 score lock-up
                 response = client.models.generate_content(
                     model='gemini-2.0-flash', 
                     contents=[prompt, uploaded_image],
@@ -386,11 +395,10 @@ if analysis_trigger:
         for flag in result.get("red_flags", []): st.markdown(f"**•** {flag}")
         
         st.divider()
-        # --- FIXED: Title Case Beautifier ---
+        # Smart Formatter for Analysis Dictionary (Title Case)
         analysis_data = result.get("detailed_technical_analysis", {})
         if isinstance(analysis_data, dict):
             for header, bullets in analysis_data.items():
-                # Force Title Case (e.g. "suction_power" -> "Suction Power")
                 clean_header = header.replace("_", " ").title()
                 st.markdown(f"### {clean_header}") 
                 if isinstance(bullets, list):
