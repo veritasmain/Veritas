@@ -226,17 +226,17 @@ if analysis_trigger:
                     - 70-85: GOOD.
                     - 90-100: EXCELLENT.
                     
+                    LIAR'S PENALTY: False claims = Score < 25.
+
                     TASK 1: EXACT NAMING
                     - "product_name": Use exact Brand & Model.
 
-                    TASK 2: REVIEWS
+                    TASK 2: REVIEWS & SPECS
                     - "reviews_summary": LIST of strings.
                     - "key_complaints": LIST of strings.
+                    - "detailed_technical_analysis": JSON OBJECT (Title Case Keys).
 
-                    TASK 3: TECHNICAL ANALYSIS
-                    - "detailed_technical_analysis": JSON OBJECT. Keys must be Human Readable. Values must be Lists of Strings.
-
-                    Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
+                    Return JSON: product_name, score, verdict, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:25000]}
                     """
                     response = client.models.generate_content(
@@ -247,40 +247,36 @@ if analysis_trigger:
                     temp_result = clean_and_parse_json(response.text)
                     temp_name = temp_result.get("product_name", "Unknown")
                     temp_score = extract_score_safely(temp_result)
-                    temp_complaints = str(temp_result.get("key_complaints", ""))
 
-                    # "Zombie" Check: If result is lazy/empty, force backup
-                    is_lazy = "cannot determine" in temp_complaints.lower() or "no reviews" in temp_complaints.lower()
-                    if temp_name in ["Unknown", "Generic", "Product Page"] or temp_score == 50 or is_lazy:
+                    if temp_name in ["Unknown", "Generic", "Product Page"] or temp_score == 50:
                          scrape_error = True
                     else:
                         result = temp_result
 
                 # Backup Deep Search (Forced Execution)
                 if scrape_error or not result:
-                    # Construct queries that look for the PRODUCT, not just the URL
                     search_query_1 = f"{fallback_name} reviews reddit problems"
-                    search_query_2 = f"{fallback_name} scam warning"
+                    search_query_2 = f"{fallback_name} specs vs reality"
                     
                     prompt = f"""
-                    I cannot access the page directly. 
+                    I cannot access page directly. 
                     Target ID: {fallback_name} (from URL: {target_url})
                     
                     MANDATORY INSTRUCTION:
                     1. USE 'google_search' TOOL to find the REAL PRODUCT NAME associated with this ID.
-                    2. Then SEARCH AGAIN for "{search_query_1}" using that Name.
+                    2. Then SEARCH AGAIN for "{search_query_1}" using that Real Name.
                     3. If no specific reviews exist, SEARCH for "Common problems with cheap [Product Category]".
 
-                    OUTPUT:
-                    - "product_name": The Real Brand/Model you found.
-                    - "key_complaints": LIST specific complaints found on Reddit/Forums. If none, list "Potential Failures" based on the product type.
-                    - "verdict": Short & Punchy.
-                    
+                    OUTPUT REQUIREMENTS:
+                    - "product_name": THE REAL COMMERCIAL NAME (e.g. 'Lenovo LP40', 'S116 Drone'). Do NOT use the ID.
+                    - "verdict": SHORT & PUNCHY.
+                    - "detailed_technical_analysis": JSON OBJECT (Title Case Keys).
+
                     STRICT SCORING:
                     - If you can't find info -> Score 40 (High Risk/Unknown).
                     - If found "scam" -> Score 10.
 
-                    Return JSON: product_name, score, verdict, red_flags, detailed_technical_analysis, key_complaints, reviews_summary.
+                    Return JSON: product_name, score, verdict, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
                     response = client.models.generate_content(
                         model='gemini-2.0-flash', 
@@ -295,7 +291,7 @@ if analysis_trigger:
                 YOU ARE A FORENSIC ANALYST.
                 
                 STEP 1: READ TEXT & IDENTIFY PRODUCT from image.
-                STEP 2: SEARCH GOOGLE for the identified product to find reviews.
+                STEP 2: SEARCH GOOGLE for the identified product.
                 STEP 3: COMPARE Screenshot claims vs Real World data.
                 
                 STRICT SCORING:
@@ -325,9 +321,13 @@ if analysis_trigger:
             score = extract_score_safely(result)
             
             final_name = result.get("product_name", "Unidentified Item")
-            if final_name in ["Unknown", "N/A", "Unidentified Item", "Generic"] and 'fallback_name' in locals() and fallback_name:
-                 final_name = fallback_name
-
+            
+            # Logic to ensure we don't save "AliExpress Item" if we can help it, 
+            # BUT if the AI failed to find a real name, we fallback to the ID (better than "Unknown").
+            if final_name in ["Unknown", "N/A", "Unidentified Item", "Generic", "Product Page"]:
+                 if 'fallback_name' in locals() and fallback_name:
+                     final_name = fallback_name
+            
             st.session_state.history.append({
                 "source": final_name,
                 "score": score,
@@ -354,7 +354,7 @@ if analysis_trigger:
     with col2:
         if display_image: st.image(display_image, caption="Evidence", width=200)
 
-    t1, t2, t3 = st.tabs(["🛡️ Verdict", "💬 Reviews", "🚩 Analysis"])
+    t1, t2 = st.tabs(["🛡️ Verdict", "💬 Reviews"])
     
     with t1:
         color = "red" if score <= 45 else "orange" if score < 80 else "green"
@@ -371,11 +371,27 @@ if analysis_trigger:
         if score <= 45: st.error("⛔ DO NOT BUY. Poor quality/scam.")
         elif score < 80: st.warning("⚠️ Mixed reviews. Expect issues.")
         else: st.success("✅ Safe and well-reviewed.")
+        
+        st.divider()
+        st.subheader("Deep Dive")
+        # Smart Formatter (Title Case)
+        analysis_data = result.get("detailed_technical_analysis", {})
+        if isinstance(analysis_data, dict):
+            for header, bullets in analysis_data.items():
+                clean_header = header.replace("_", " ").title()
+                st.markdown(f"### {clean_header}") 
+                if isinstance(bullets, list):
+                    for bullet in bullets:
+                        st.markdown(f"- {bullet}")
+                else:
+                    st.markdown(str(bullets))
+                st.markdown("") 
+        else:
+            st.markdown(str(analysis_data))
 
     with t2:
         st.subheader("Consensus")
         
-        # FIXED: List vs String Handler
         complaints_data = result.get("key_complaints")
         if complaints_data:
             if isinstance(complaints_data, list):
@@ -394,28 +410,3 @@ if analysis_trigger:
             st.markdown(reviews_data)
         else:
             st.caption("No review data found.")
-
-    with t3:
-        st.subheader("Red Flags")
-        red_flags_data = result.get("red_flags", [])
-        if isinstance(red_flags_data, list):
-            for flag in red_flags_data:
-                st.markdown(f"**•** {flag}")
-        elif isinstance(red_flags_data, str):
-             st.markdown(f"**•** {red_flags_data}")
-        
-        st.divider()
-        # Smart Formatter (Title Case)
-        analysis_data = result.get("detailed_technical_analysis", {})
-        if isinstance(analysis_data, dict):
-            for header, bullets in analysis_data.items():
-                clean_header = header.replace("_", " ").title()
-                st.markdown(f"### {clean_header}") 
-                if isinstance(bullets, list):
-                    for bullet in bullets:
-                        st.markdown(f"- {bullet}")
-                else:
-                    st.markdown(str(bullets))
-                st.markdown("") 
-        else:
-            st.markdown(str(analysis_data))
