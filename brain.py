@@ -172,24 +172,19 @@ def filter_empty_sections(analysis_dict):
         return {}
         
     cleaned_dict = {}
-    # Words that indicate the AI is giving advice instead of analysis
     banned_phrases = [
         "check for", "ensure that", "look for", "verify", "difficult to assess",
         "depends on", "cannot determine", "impossible to", "without specific",
-        "potential for", "user reviews", "if known"
+        "potential for", "user reviews", "if known", "consult manufacturer"
     ]
     
     for key, value in analysis_dict.items():
-        # Skip if value is missing/empty
         if not value: continue
-        
-        # Flatten lists to string for checking
         val_str = str(value).lower()
         
-        # Check if the content is just generic fluff
+        # Fluff detector
         is_fluff = any(phrase in val_str for phrase in banned_phrases)
         
-        # Only keep if it's NOT fluff and has substantial length
         if not is_fluff and len(val_str) > 10:
             cleaned_dict[key] = value
             
@@ -274,11 +269,10 @@ if analysis_trigger:
             | Storage (1TB+) | < $20 | 10 | SCAM (FAKE CAPACITY) |
 
             MANDATORY INSTRUCTION: 
-            You are an AUDITOR, not a coach. 
-            DO NOT tell the user to "Check for" or "Look at". 
-            DO NOT say "Difficult to assess". 
-            ONLY output specific, factual findings. 
-            If you cannot find specific specs, DO NOT CREATE A SECTION for it.
+            You are an AUDITOR.
+            1. DO NOT give generic advice ("Check for X").
+            2. DO NOT say "Unable to assess".
+            3. FOR REVIEWS/COMPLAINTS: If no specific reviews are found, you MUST list "Likely Failures" for this category (e.g. "Battery Drain", "Motor Failure"). DO NOT LEAVE BLANK.
             """
 
             # === PATH A: LINK ANALYSIS ===
@@ -327,11 +321,7 @@ if analysis_trigger:
                     1. Extract Exact "product_name" (Max 5 words).
                     2. Apply Scoring Grid.
                     3. JSON Output (Title Case Keys).
-                    
-                    FOR "detailed_technical_analysis":
-                    - Only include keys where you have found SPECIFIC DATA.
-                    - Example: "Battery": ["1800mAh (Weak)"] -> GOOD.
-                    - Example: "Battery": ["Check manufacturer site"] -> BAD. DELETE IT.
+                    4. "key_complaints": MUST contain a list of strings. If unknown, list generic risks for {detected_category}.
 
                     Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
                     Content: {str(content)[:25000]}
@@ -350,11 +340,11 @@ if analysis_trigger:
 
                 # 2. Backup Deep Search
                 if scrape_error or not result:
-                    search_query_1 = f"{fallback_name} reviews"
+                    search_query_1 = f"{fallback_name} problems reddit"
                     search_query_2 = f"{fallback_name} real vs fake"
                     context_injection = ""
                     if detected_category != "UNKNOWN ELECTRONICS":
-                        context_injection = f"THIS IS A {detected_category}. Focus search on {detected_category} reviews."
+                        context_injection = f"THIS IS A {detected_category}. Focus search on {detected_category} failures."
                     
                     prompt = f"""
                     I cannot access page directly. 
@@ -367,7 +357,7 @@ if analysis_trigger:
                     
                     OUTPUT:
                     - "product_name": EXTRACT REAL NAME (Max 5 words).
-                    - "detailed_technical_analysis": JSON OBJECT. Only include keys with ACTUAL findings.
+                    - "key_complaints": LIST of actual problems found. If none, list "Expected Issues for Cheap {detected_category}".
 
                     Return JSON: product_name, score, detailed_technical_analysis, key_complaints, reviews_summary.
                     """
@@ -393,7 +383,7 @@ if analysis_trigger:
                     "product_name": "Brand Model",
                     "score": 0-100,
                     "reviews_summary": ["Point 1", "Point 2"],
-                    "key_complaints": ["Complaint 1"],
+                    "key_complaints": ["Complaint 1", "Complaint 2"],
                     "detailed_technical_analysis": {{"Price Check": ["..."], "Spec Verify": ["..."]}}
                 }}
                 """
@@ -492,6 +482,9 @@ if analysis_trigger:
                     st.markdown(f"**🚨** {c}")
             elif isinstance(complaints_data, str):
                 st.markdown(f"**🚨** {complaints_data}")
+        else:
+            # Fallback if AI somehow failed to generate defaults
+            st.warning("No specific complaints found, but exercise caution with generic electronics.")
         
         st.divider()
         st.subheader("Source Summaries")
